@@ -42,7 +42,7 @@ typedef struct {
 typedef struct {
     tTypeInfo returnType;
     int paramCount;
-    tTypeInfo *params;    // pole délky paramCount; vlastnictví viz symtable_free
+    tTypeInfo *params;    // pole délky paramCount; tabulka si při vložení vytváří vlastní kopii, volající si své pole spravuje sám
     bool isDefined;       // true, pokud už bylo zpracováno tělo funkce
 } tFuncData;
 

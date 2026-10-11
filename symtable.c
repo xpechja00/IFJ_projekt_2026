@@ -1,4 +1,10 @@
-#include <stdio.h>
+/*
+ * Projekt: Implementace překladače imperativního jazyka IFJ26
+ * Modul:   symtable.c - implementace AVL stromu jako tabulka symbolu
+ *
+ * Autor: xpechja00
+ */
+
 #include "symtable.h"
 #include <string.h>
 #include <stdlib.h>
@@ -65,13 +71,6 @@ tSymTable *symtable_create(void){
     return table;
 }
 
-// funkce pro praci s tabulkou symbolu
-tData *symtable_search(tSymTable *table, const char *key){
-    if(table == NULL || key == NULL) return NULL;
-    return tree_search(table->root, key);
-
-}
-
 static int node_height(const tNode *node){
     if(node == NULL) return -1;
     return node->height;
@@ -84,7 +83,7 @@ static void update_node_height(tNode *node){
     if(node != NULL){
         node->height = max_int(node_height(node->left), node_height(node->right)) + 1;  
     }
-}
+} //update_node_height
 
 static int node_balance(tNode *node){
     if(node == NULL) return 0;
@@ -100,7 +99,7 @@ static tNode *rotate_left(tNode *old_root){
     update_node_height(old_root);
     update_node_height(new_root);
     return new_root;
-}
+} // rotate_left
 
 // avl rotace doprava
 static tNode *rotate_right(tNode *old_root){
@@ -111,45 +110,98 @@ static tNode *rotate_right(tNode *old_root){
     update_node_height(old_root);
     update_node_height(new_root);
     return new_root;
-}
+} //rotate_right
 
 
-static rebalance(tNode *node){
+static tNode *rebalance(tNode *node){
+    if(node == NULL) return NULL;
 
-}
+    update_node_height(node);
+    int balance = node_balance(node);
+
+    if(balance > 1){
+        if(node_balance(node->left) < 0){
+            node->left = rotate_left(node->left);
+        }
+        return rotate_right(node);
+    } else if(balance < -1) {
+        if(node_balance(node->right) > 0){
+            node->right = rotate_right(node->right);
+        }
+        return rotate_left(node);
+    }
+    return node;
+} //rebalance
 
 // vnitrni funkce na praci s ADT 
-tData *tree_search(tNode *node, const char *key){
+static tData *tree_search(tNode *node, const char *key){
     if(node == NULL) return NULL;
 
     int compare = strcmp(key, node->key);
-    tData *temp;
 
     if(compare == 0){
         return &node->data;
     } else if(compare < 0){
-        temp = tree_search(node->left, key);
-    } else {
-        temp = tree_search(node->right, key);
-    }
-
-    if(temp == NULL) return NULL;
-    return temp;
+        return tree_search(node->left, key);
+    } 
+    return tree_search(node->right, key);
 } //tree_search
 
-bool symtable_insert(tSymTable *table, const char *key, tData data){
-    if(table == NULL || key == NULL) return false;
-    if(symtable_search(table, key) != NULL) return false;
+// funkce pro praci s tabulkou symbolu
+tData *symtable_search(tSymTable *table, const char *key){
+    if(table == NULL || key == NULL) return NULL;
+    return tree_search(table->root, key);
 
-    tNode *new_node = node_create();
-    if(new_node == NULL) return false;
-    new_node->data = data;
+} //symtable_search
 
-    new_node->key = malloc(sizeof(char) * strlen(key) + 1);
-    if(new_node->key == NULL) return false;
-    strcpy(new_node->key, key);
+// pomocna rekurzivni funkce na vlozeni noveho prvku
+static tNode *tree_insert(tNode *node, const char *key, tData data, tInsertResult *status){
+    tNode *temp;
+    if(node == NULL){
+        temp = node_create(key, data);
+        if(temp == NULL) *status = INSERT_ERROR;
+        return temp;
+    }
 
+    int compare = strcmp(key, node->key);
+    if(compare < 0){
+        node->left = tree_insert(node->left, key, data, status);
+    } else if(compare > 0){
+        node->right = tree_insert(node->right, key, data, status);
+    } else {
+        *status = INSERT_DUPLICATE;
+    }
+    if(*status == INSERT_OK){
+        return rebalance(node);
+    }
+    return node;
+} //tree_insert
+
+// verejna funkce na vlozeni noveho prvku
+// vraci enum kvuli rozliseni chyby s duplikatem a malloc errorem
+tInsertResult symtable_insert(tSymTable *table, const char *key, tData data){
+    if(table == NULL || key == NULL) return INSERT_ERROR;
+
+    tInsertResult result = INSERT_OK;
+    table->root = tree_insert(table->root, key, data, &result);
     
+    return result;
 } //symtable_insert
 
+static void tree_free(tNode *node){
+    if(node != NULL){
+        tree_free(node->left);
+        tree_free(node->right);
+        free(node->key);
+        if(node->data.kind == SYM_FUNC){
+            free(node->data.attribute.func.params);
+        }
+        free(node);
+    }
+} //tree_free
 
+void symtable_free(tSymTable *table){
+    if(table == NULL) return;
+    tree_free(table->root);
+    free(table);
+} //symtable_free

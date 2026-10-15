@@ -22,7 +22,7 @@
 #define INDENT_MAX 256              // max. hloubka zanoření bloků
 #define QUEUE_MAX  (INDENT_MAX + 4) // EOL + všechny DEDENTy + rezerva
 
-// Stavy automatu (jeden case = jeden stav z diagramu)
+// Stavy automatu 
 
 typedef enum {
     S_START,
@@ -31,19 +31,19 @@ typedef enum {
     S_ID_UNDERSCORE,    // přečteno '_'
     S_ID,               // uvnitř identifikátoru
 
-    // čísla (názvy podle diagramu)
-    S_NUM_INT,          // Q1
-    S_NUM_ZERO,         // Q3
-    S_NUM_DOT,          // Q2: tečka na začátku lexému
-    S_NUM_INT_DOT,      // Q4
-    S_NUM_FRAC,         // Q6
-    S_NUM_EXP_START,    // Q5
-    S_NUM_EXP_SIGN,     // Q9
-    S_NUM_EXP,          // Q7
-    S_NUM_SUFFIX,       // Q8
-    S_NUM_INT_US,       // P1
-    S_NUM_FRAC_US,      // P2
-    S_NUM_EXP_US,       // P3
+    // čísla 
+    S_NUM_INT,          
+    S_NUM_ZERO,         
+    S_NUM_DOT,          // tečka na začátku lexému
+    S_NUM_INT_DOT,      
+    S_NUM_FRAC,         
+    S_NUM_EXP_START,    
+    S_NUM_EXP_SIGN,     
+    S_NUM_EXP,          
+    S_NUM_SUFFIX,       
+    S_NUM_INT_US,       
+    S_NUM_FRAC_US,      
+    S_NUM_EXP_US,       
 
     // operátory
     S_LT, S_GT, S_ASSIGN, S_EXCL, S_PLUS, S_AMP, S_PIPE,
@@ -59,9 +59,13 @@ typedef enum {
     S_BLOCK_SLASH,      // uvnitř komentáře, viděl '/'
 
     // řetězce
-    S_STRING,
-    S_STRING_ESC,
-    // TODO: stavy pro """ (víceřádkový řetězec)
+    S_STRING_OPEN,      // přečteno "
+    S_STRING,           // uvnitř "..."
+    S_STRING_ESC,       // uvnitř, po '\'
+    S_STRING_EMPTY,     // přečteno ""
+    S_ML_STRING,        // uvnitř """..."""
+    S_ML_QUOTES,        // uvnitř """, čtou se uvozovky (možný konec)
+
 } tState;
 
 static const struct {
@@ -94,17 +98,13 @@ static const struct {
     { "false",     TOK_FALSE_LIT },
 };
 
-// ---------------------------------------------------------------------------
-// Vstup: next_char / unget_char s počítáním řádků
-// ---------------------------------------------------------------------------
-
 static int line = 1;
 static int pushback;
 static bool has_pushback = false;
 
-static void lex_error(const char *msg)
+static void lex_error(int ln, const char *msg)
 {
-    error_exit(ERR_LEX, "řádek %d: %s", line, msg);
+    error_exit(ERR_LEX, "řádek %d: %s", ln, msg);
 }
 
 static int next_char(void)
@@ -119,11 +119,11 @@ static int next_char(void)
     if (c == '\n')
         line++;
     if (c != EOF && c > 127)
-        lex_error("znak mimo ASCII");
+        lex_error(line, "znak mimo ASCII");
     return c;
 }
 
-// Vrátí jeden znak na vstup (i EOF). Víc než jeden znak zpět nejde.
+// Vrátí jeden znak na vstup 
 static void unget_char(int c)
 {
     if (c == '\n')
@@ -132,9 +132,7 @@ static void unget_char(int c)
     has_pushback = true;
 }
 
-// ---------------------------------------------------------------------------
-// Buffer lexému (dynamický, zdvojování kapacity)
-// ---------------------------------------------------------------------------
+// Buffer lexemu
 
 static char *buf = NULL;
 static size_t buf_len = 0;
@@ -171,9 +169,7 @@ static char *buf_copy(void)
     return s;
 }
 
-// ---------------------------------------------------------------------------
-// Fronta čekajících tokenů (EOL + DEDENTy, DOT po "5.")
-// ---------------------------------------------------------------------------
+// Fronta čekajících tokenů
 
 static tToken queue[QUEUE_MAX];
 static int q_head = 0;
@@ -195,9 +191,7 @@ static tToken queue_pop(void)
     return t;
 }
 
-// ---------------------------------------------------------------------------
-// Stav řádků a odsazení
-// ---------------------------------------------------------------------------
+// Pomocné proměnné
 
 static int indent_stack[INDENT_MAX] = { 0 };  // na dně 0
 static int indent_top = 0;
@@ -246,13 +240,11 @@ static bool handle_indent(void)
         added = true;
     }
     if (pending_indent != indent_stack[indent_top])
-        lex_error("odsazení neodpovídá žádné předchozí úrovni");
+        lex_error(line, "odsazení neodpovídá žádné předchozí úrovni");
     return added;
 }
 
-// ---------------------------------------------------------------------------
 // Úklid a inicializace
-// ---------------------------------------------------------------------------
 
 static void scanner_cleanup(void)
 {
@@ -284,9 +276,7 @@ void token_free(tToken *token)
     }
 }
 
-// ---------------------------------------------------------------------------
 // Hlavní funkce
-// ---------------------------------------------------------------------------
 
 tToken scanner_next(void)
 {
@@ -302,18 +292,19 @@ tToken scanner_next(void)
         int c;
         while ((c = next_char()) == ' ' || c == '\t') {
             if (c == '\t')
-                lex_error("tabulátor v odsazení");
+                lex_error(line, "tabulátor v odsazení");
             pending_indent++;
         }
         unget_char(c);   // první znak, který není mezera, patří dalšímu kroku
         if (paren_depth > 0 && c != '\n' && c != EOF
             && pending_indent <= indent_stack[indent_top])
-        lex_error("řádek uvnitř závorek musí být odsazen víc");
+        lex_error(line, "řádek uvnitř závorek musí být odsazen víc");
     }
 
     buf_reset();
     tState state = S_START;
-    int tok_line = line;    
+    int tok_line = line;  
+    int quote_count = 0;  
     int c;
 
     while (true) {
@@ -349,7 +340,7 @@ tToken scanner_next(void)
             }
 
             if (expect_eol && c != '/')     
-                lex_error("za víceřádkovým komentářem musí být konec řádku");
+                lex_error(line, "za víceřádkovým komentářem musí být konec řádku");
 
             if (!line_has_token && c != '/' && handle_indent()) {
                 unget_char(c);
@@ -385,7 +376,7 @@ tToken scanner_next(void)
             } else if(c == '/'){
                 state = S_SLASH;
             } else if(c == '"'){
-                state = S_STRING;
+                state = S_STRING_OPEN;
             }  else if (c == '0') {
                 buf_add((char)c);
                 state = S_NUM_ZERO;
@@ -415,17 +406,18 @@ tToken scanner_next(void)
             } else if(c == '-'){
                 return make_token(TOK_MINUS, tok_line);
             } else {
-                lex_error("neznámý znak");
+                lex_error(tok_line, "neznámý znak");
             }
             break;
 
-        // ukázka vzoru: operátor s jedním znakem dopředu
+        // Operátory
+
         case S_LT:
             if (c == '=')
                 return make_token(TOK_LE, tok_line);
             if (c == '-')
                 return make_token(TOK_ARROW_L, tok_line);
-            unget_char(c);                  // "jiný" -> vrátit a vydat
+            unget_char(c);                  
             return make_token(TOK_LT, tok_line);
 
         case S_GT:
@@ -461,7 +453,7 @@ tToken scanner_next(void)
                 return make_token(TOK_AND, tok_line);
             }
             unget_char(c);
-            lex_error("neznámý operátor");
+            lex_error(tok_line, "neznámý operátor");
             break;
 
         case S_PIPE:
@@ -469,7 +461,7 @@ tToken scanner_next(void)
                 return make_token(TOK_OR, tok_line);
             }
             unget_char(c);
-            lex_error("neznámý operátor");
+            lex_error(tok_line, "neznámý operátor");
             break;
 
         case S_AT:
@@ -480,15 +472,18 @@ tToken scanner_next(void)
             unget_char(c);
             if (buf_len == 4 && strcmp(buf, "main") == 0)
                 return make_token(TOK_ANNOT_MAIN, tok_line);
-            lex_error("po @ musí následovat main");
+            lex_error(tok_line, "po @ musí následovat main");
+            break;
         
+        // ID
+
         case S_ID_UNDERSCORE:
             if (is_ident_char(c)) {
                 buf_add((char)c);
                 state = S_ID;
                 break;
             }
-            lex_error("samotné '_' není identifikátor");
+            lex_error(tok_line, "samotné '_' není identifikátor");
             break;
             
         case S_ID:
@@ -506,6 +501,8 @@ tToken scanner_next(void)
                 return t;
             }
             break;
+
+        // lomeno a komentáře
 
         case S_SLASH:
             if(c == '/'){
@@ -535,9 +532,10 @@ tToken scanner_next(void)
             } else if(c == '\n'){
                 comment_had_nl = true;
             } else if(c == EOF){
-                lex_error("neukončený komentář");
+                lex_error(tok_line, "neukončený komentář");
             } 
             break;
+
         case S_BLOCK_STAR:
             if(c == '/'){
                 comment_depth--;
@@ -557,7 +555,7 @@ tToken scanner_next(void)
             } else if(c == '*'){
                 break;
             } else if(c == EOF){
-                lex_error("neukončený komentář");
+                lex_error(tok_line, "neukončený komentář");
             } else if(c == '\n'){
                 comment_had_nl = true;
             }
@@ -576,10 +574,12 @@ tToken scanner_next(void)
                 comment_had_nl = true;
                 break;
             } else if(c == EOF){
-                lex_error("neukončený komentář");
+                lex_error(tok_line, "neukončený komentář");
             } 
             break;
         
+        // int a double
+
         case S_NUM_INT:
             if(c == '_'){
                 state = S_NUM_INT_US;
@@ -589,7 +589,7 @@ tToken scanner_next(void)
             } else if(c == 'e' || c == 'E'){
                 state = S_NUM_EXP_START;
             } else if(is_letter(c)){
-                lex_error("chybně zapsané číslo");
+                lex_error(tok_line, "písmeno nesmí následovat hned za číslem ");
             } else if(is_digit(c)){
                 //zustat v S_NUM+INT
             } else {
@@ -617,7 +617,7 @@ tToken scanner_next(void)
             } else if(c == 'e' || c == 'E'){
                 state = S_NUM_EXP_START;
             } else if(is_ident_char(c)){
-                lex_error("špatně zapsané číslo");
+                lex_error(tok_line, "nenulové číslo nesmí začínat nulou / podtržítko musí být mezi číslicemi");
             } else {
                 unget_char(c);
                 tToken token = make_token(TOK_INT_LIT, tok_line);
@@ -646,7 +646,7 @@ tToken scanner_next(void)
             } else if(c == '+' || c == '-'){
                 state = S_NUM_EXP_SIGN;
             } else {
-                lex_error("špatně zapsané číslo");
+                lex_error(tok_line, "za 'e' musí následovat znaménko nebo číslice");
             }
             buf_add(c);
             break;
@@ -663,7 +663,7 @@ tToken scanner_next(void)
                 state = S_NUM_SUFFIX;
                 break;
             } else if(is_letter(c)){
-                lex_error("špatně zapsané číslo");
+                lex_error(tok_line, "písmeno nesmí následovat hned za číslem");
             } else {
                 unget_char(c);
                 tToken token = make_token(TOK_DOUBLE_LIT, tok_line);
@@ -683,7 +683,7 @@ tToken scanner_next(void)
                 state = S_NUM_SUFFIX;
                 break;
             } else if(is_letter(c)){
-                lex_error("špatně zapsané číslo");
+                lex_error(tok_line, "písmeno nesmí následovat hned za číslem");
             } else {
                 unget_char(c);
                 tToken token = make_token(TOK_DOUBLE_LIT, tok_line);
@@ -691,6 +691,145 @@ tToken scanner_next(void)
                 return token;
             }
             buf_add(c);
+            break;
+
+        case S_NUM_SUFFIX:
+            if(is_ident_char(c)){
+                lex_error(tok_line, "za příponou d/D nesmí nic následovat");
+                break;
+            } else {
+                unget_char(c);
+                tToken token = make_token(TOK_DOUBLE_LIT, tok_line);
+                token.value.double_val = strtod(buf, NULL);
+                return token;
+            }
+        
+        case S_NUM_EXP_SIGN:
+            if(is_digit(c)){
+                state = S_NUM_EXP;
+                buf_add(c);
+                break;
+            } 
+            lex_error(tok_line, "za znaménkem exponentu musí následovat číslice");
+            break;
+        case S_NUM_INT_US:
+            if(is_digit(c)){
+                state = S_NUM_INT;
+                buf_add(c);
+                break;
+            } else if(c == '_'){
+                break;
+            }
+            lex_error(tok_line, "podtržítko musí být mezi číslicemi");
+            break;
+
+        case S_NUM_FRAC_US:
+            if(is_digit(c)){
+                state = S_NUM_FRAC;
+                buf_add(c);
+                break;
+            } else if(c == '_'){
+                break;
+            }
+            lex_error(tok_line, "podtržítko musí být mezi číslicemi");
+            break;
+
+        case S_NUM_EXP_US:
+            if(is_digit(c)){
+                state = S_NUM_EXP;
+                buf_add(c);
+                break;
+            } else if(c == '_'){
+                break;
+            }
+            lex_error(tok_line, "podtržítko musí být mezi číslicemi");
+            break;
+        
+        // string
+        
+        case S_STRING_OPEN:
+            if(c == '"'){
+                state = S_STRING_EMPTY;
+            } else {
+                state = S_STRING;
+                unget_char(c);
+            }
+            break;
+
+        case S_STRING_EMPTY:
+            if(c == '"'){
+                state = S_ML_STRING;
+            } else {
+                unget_char(c);
+                tToken token = make_token(TOK_STRING_LIT, tok_line);
+                token.value.str_val = buf_copy();
+                return token;
+            }
+            break;
+        
+        case S_STRING:
+            if(c == '"'){
+                tToken token = make_token(TOK_STRING_LIT, tok_line);
+                token.value.str_val = buf_copy();
+                return token;
+            } else if(c == '\\'){
+                state = S_STRING_ESC;
+                break;
+            } else if(c == '\n' || c == EOF){
+                lex_error(tok_line, "neukončený řetězec");
+                break;
+            }
+            buf_add(c);
+            break;
+
+        case S_STRING_ESC:
+            if(c == '\\'){
+                buf_add('\\');
+            } else if(c == '"'){
+                buf_add('"');     
+            } else if(c == 'n'){
+                buf_add('\n');
+            } else if(c == 'r'){
+                buf_add('\r');
+            } else if(c == 't'){
+                buf_add('\t');
+            } else {
+                lex_error(tok_line, "neplatná escape sekvence");
+            }
+            state = S_STRING;
+            break;
+
+        case S_ML_STRING:
+            if(c == '"'){
+                quote_count = 1;
+                state = S_ML_QUOTES;
+
+            } else if(c == EOF){
+                lex_error(tok_line, "neukončený řetězec");
+            } else {
+                buf_add(c);
+            }
+            break;
+
+        case S_ML_QUOTES:
+            if (c == '"') {
+                quote_count++;
+                break;
+            }
+            if (quote_count >= 3) {                 // konec řetězce
+                for (int i = 0; i < quote_count - 3; i++)
+                    buf_add('"');                   // přebytečné uvozovky patří do obsahu
+                unget_char(c);
+                tToken token = make_token(TOK_STRING_LIT, tok_line);
+                token.value.str_val = buf_copy();
+                return token;
+            }
+            for (int i = 0; i < quote_count; i++)   // méně než 3 -> byly to obyčejné znaky
+                buf_add('"');
+            if (c == EOF)
+                lex_error(tok_line, "neukončený víceřádkový řetězec");
+            buf_add((char)c);
+            state = S_ML_STRING;
             break;
         default:
             error_exit(ERR_INTERNAL, "neošetřený stav automatu %d", (int)state);

@@ -14,27 +14,158 @@
 // Aktuálně zpracovávaný token
 static tToken current_token;
 
+#include <stdlib.h> 
+
+// Bezpečné načtení dalšího tokenu s uvolněním paměti toho předchozího
+static void get_next_token() {
+    if (current_token.type == TOK_IDENT || current_token.type == TOK_STRING_LIT) {
+        if (current_token.value.str_val != NULL) {
+            free(current_token.value.str_val);
+        }
+    }
+    current_token = scanner_next();
+}
+
+// Zásobník pro precedenční analýzu
+
+#define MAX_STACK 100
+
+typedef struct {
+    tTokenType items[MAX_STACK];
+    int top;
+} tStack;
+
+static void stack_init(tStack* s) {
+    s->top = -1;
+}
+
+static void stack_push(tStack* s, tTokenType type) {
+    if (s->top >= MAX_STACK - 1) error_exit(ERR_INTERNAL, "Přetečení zásobníku výrazů");
+    s->items[++(s->top)] = type;
+}
+
+static tTokenType stack_pop(tStack* s) {
+    if (s->top < 0) error_exit(ERR_INTERNAL, "Zásobník výrazů je prázdný");
+    return s->items[(s->top)--];
+}
+
+static tTokenType stack_top(tStack* s) {
+    if (s->top < 0) return TOK_EOF; // Prázdný zásobník
+    return s->items[s->top];
+}
+
+// --- TABULKA PRIORIT OPERÁTORŮ ---
+// Vrací prioritu operátoru (vyšší číslo = vyšší priorita)
+static int get_precedence(tTokenType type) {
+    switch (type) {
+        case TOK_STAR:
+        case TOK_SLASH:
+            return 40; // Násobení a dělení má nejvyšší přednost
+        case TOK_PLUS:
+        case TOK_MINUS:
+        case TOK_CONCAT:
+            return 30; // Sčítání, odčítání a spojování řetězců
+        case TOK_LT:
+        case TOK_LE:
+        case TOK_GT:
+        case TOK_GE:
+        case TOK_EQ:
+        case TOK_NEQ:
+            return 20; // Relační operátory
+        case TOK_AND:
+            return 10; // Logické AND
+        case TOK_OR:
+            return 5;  // Logické OR
+        default:
+            return -1; // Není operátor
+    }
+}
+
 // Deklarace interních funkcí pro rekurzivní sestup
 int parse_program();
 int parse_statement();
+
+// Výrazy (precedenční analýza pomocí Shunting-yard algoritmu)
 int parse_expression() {
-    // Zatím umíme přečíst jen jeden samostatný token (literál nebo proměnnou)
-    if (current_token.type == TOK_INT_LIT || 
-        current_token.type == TOK_DOUBLE_LIT || 
-        current_token.type == TOK_STRING_LIT || 
-        current_token.type == TOK_TRUE_LIT || 
-        current_token.type == TOK_FALSE_LIT || 
-        current_token.type == TOK_IDENT) {
-        
-        current_token = scanner_next();
-    } else {
-        error_exit(ERR_SYNTAX, "Očekáván výraz (hodnota nebo proměnná)");
+    tStack op_stack;
+    stack_init(&op_stack);
+    bool expecting_operand = true;
+
+    while (true) {
+        if (expecting_operand) {
+            // Zpracování levé závorky nebo operandu
+            if (current_token.type == TOK_LPAREN) {
+                stack_push(&op_stack, current_token.type);
+                get_next_token();
+            } else if (current_token.type == TOK_INT_LIT || 
+                       current_token.type == TOK_DOUBLE_LIT || 
+                       current_token.type == TOK_STRING_LIT || 
+                       current_token.type == TOK_TRUE_LIT || 
+                       current_token.type == TOK_FALSE_LIT || 
+                       current_token.type == TOK_IDENT) {
+                // TODO: Předání operandu do generátoru kódu
+                get_next_token();
+                expecting_operand = false;
+            } else {
+                error_exit(ERR_SYNTAX, "Očekáván operand nebo '('");
+            }
+        } else {
+            // Zpracování pravé závorky nebo operátoru
+            if (current_token.type == TOK_RPAREN) {
+                bool found_lparen = false;
+                
+                // Vybírání ze zásobníku až po levou závorku
+                while (stack_top(&op_stack) != TOK_EOF) {
+                    tTokenType top_op = stack_pop(&op_stack);
+                    if (top_op == TOK_LPAREN) {
+                        found_lparen = true;
+                        break;
+                    }
+                    // TODO: Předání operátoru do generátoru kódu
+                }
+                
+                if (!found_lparen) {
+                    break; // Závorka nepatří k výrazu
+                }
+                get_next_token();
+            } else if (get_precedence(current_token.type) > 0) {
+                int current_prec = get_precedence(current_token.type);
+                
+                // Zpracování priorit operátorů
+                while (stack_top(&op_stack) != TOK_EOF && stack_top(&op_stack) != TOK_LPAREN) {
+                    if (get_precedence(stack_top(&op_stack)) >= current_prec) {
+                        tTokenType top_op = stack_pop(&op_stack);
+                        // TODO: Předání operátoru do generátoru kódu
+                    } else {
+                        break;
+                    }
+                }
+                
+                stack_push(&op_stack, current_token.type);
+                get_next_token();
+                expecting_operand = true;
+            } else {
+                break; // Konec výrazu
+            }
+        }
     }
 
-    // TODO: Zde později přidáme cyklus a zásobník pro řešení operátorů (+, -, *, /)
-    
+    if (expecting_operand) {
+        error_exit(ERR_SYNTAX, "Neočekávaný konec výrazu");
+    }
+
+    // Vyprázdnění zbytku zásobníku
+    while (stack_top(&op_stack) != TOK_EOF) {
+        tTokenType top_op = stack_pop(&op_stack);
+        if (top_op == TOK_LPAREN) {
+            error_exit(ERR_SYNTAX, "Nespárovaná levá závorka ve výrazu");
+        }
+        // TODO: Předání operátoru do generátoru kódu
+    }
+
     return ERR_OK;
 }
+
 int parse_list();
 int parse_control_flow();
 int parse_function_expression();
@@ -49,24 +180,24 @@ int parse_program() {
     // Prolog
     if (current_token.type != TOK_KW_IMPORT) 
         error_exit(ERR_SYNTAX, "Očekáváno klíčové slovo 'import'");
-    current_token = scanner_next();
+    get_next_token();
     
     if (current_token.type != TOK_IDENT || strcmp(current_token.value.str_val, "ifj26") != 0) 
         error_exit(ERR_SYNTAX, "Očekáván identifikátor 'ifj26'");
-    current_token = scanner_next();
+    get_next_token();
     
     if (current_token.type != TOK_DOT) 
         error_exit(ERR_SYNTAX, "Očekávána tečka za 'ifj26'");
-    current_token = scanner_next();
+    get_next_token();
     
     if (current_token.type != TOK_STAR) 
         error_exit(ERR_SYNTAX, "Očekávána hvězdička v prologu");
-    current_token = scanner_next();
+    get_next_token();
     
     // Hlavní cyklus zpracování na nejvyšší úrovni
     while (current_token.type != TOK_EOF) {
         if (current_token.type == TOK_EOL) {
-            current_token = scanner_next();
+            get_next_token();
             continue;
         }
 
@@ -86,135 +217,135 @@ int parse_program() {
 int parse_statement() {
     // 1. Zpracování definice proměnné (var / val)
     if (current_token.type == TOK_KW_VAR || current_token.type == TOK_KW_VAL) {
-        current_token = scanner_next();
+        get_next_token();
 
         if (current_token.type != TOK_IDENT) error_exit(ERR_SYNTAX, "Očekáván název proměnné");
-        current_token = scanner_next();
+        get_next_token();
 
         if (current_token.type == TOK_COLON) {
-            current_token = scanner_next();
+            get_next_token();
             if (current_token.type != TOK_KW_INT && current_token.type != TOK_KW_DOUBLE && 
                 current_token.type != TOK_KW_STRING && current_token.type != TOK_KW_UNIT &&
                 current_token.type != TOK_KW_BOOLEAN) {
                 error_exit(ERR_SYNTAX, "Očekáván datový typ proměnné");
             }
-            current_token = scanner_next();
+            get_next_token();
         } else {
             error_exit(ERR_SYNTAX, "Očekávána ':' a datový typ");
         }
 
         if (current_token.type != TOK_ASSIGN) error_exit(ERR_SYNTAX, "Očekáváno '='");
-        current_token = scanner_next();
+        get_next_token();
 
         parse_expression();
 
         if (current_token.type != TOK_EOL && current_token.type != TOK_EOF) {
             error_exit(ERR_SYNTAX, "Očekáván konec řádku za definicí");
         }
-        if (current_token.type == TOK_EOL) current_token = scanner_next();
+        if (current_token.type == TOK_EOL) get_next_token();
         
         return ERR_OK;
     }
 
     // 2. Zpracování podmínky 
     else if (current_token.type == TOK_KW_IF) {
-        current_token = scanner_next();
+        get_next_token();
         
         // Zpracování podmínky 
         if (current_token.type != TOK_LPAREN) error_exit(ERR_SYNTAX, "Očekávána '(' za 'if'");
-        current_token = scanner_next();
+        get_next_token();
         parse_expression();
         if (current_token.type != TOK_RPAREN) error_exit(ERR_SYNTAX, "Očekávána ')' za podmínkou");
-        current_token = scanner_next();
+        get_next_token();
 
         if (current_token.type != TOK_KW_THEN) error_exit(ERR_SYNTAX, "Očekáváno 'then'");
-        current_token = scanner_next();
+        get_next_token();
 
         if (current_token.type != TOK_EOL) error_exit(ERR_SYNTAX, "Očekáván konec řádku za 'then'");
-        current_token = scanner_next();
+        get_next_token();
 
         if (current_token.type != TOK_INDENT) error_exit(ERR_SYNTAX, "Očekáváno odsazení po 'then'");
-        current_token = scanner_next();
+        get_next_token();
 
         // Tělo if bloku
         while (current_token.type != TOK_DEDENT) {
-            if (current_token.type == TOK_EOL) { current_token = scanner_next(); continue; }
+            if (current_token.type == TOK_EOL) { get_next_token(); continue; }
             parse_statement();
         }
-        current_token = scanner_next(); 
+        get_next_token(); 
 
         // Else
         if (current_token.type == TOK_KW_ELSE) {
-            current_token = scanner_next();
+            get_next_token();
             if (current_token.type != TOK_EOL) error_exit(ERR_SYNTAX, "Očekáván konec řádku za 'else'");
-            current_token = scanner_next();
+            get_next_token();
             
             if (current_token.type != TOK_INDENT) error_exit(ERR_SYNTAX, "Očekáváno odsazení po 'else'");
-            current_token = scanner_next();
+            get_next_token();
 
             // Tělo else bloku
             while (current_token.type != TOK_DEDENT) {
-                if (current_token.type == TOK_EOL) { current_token = scanner_next(); continue; }
+                if (current_token.type == TOK_EOL) { get_next_token(); continue; }
                 parse_statement();
             }
-            current_token = scanner_next(); 
+            get_next_token(); 
         }
         return ERR_OK;
     }
 
     // 3. Zpracování cyklu 
     else if (current_token.type == TOK_KW_WHILE) {
-        current_token = scanner_next();
+        get_next_token();
         
         if (current_token.type != TOK_LPAREN) error_exit(ERR_SYNTAX, "Očekávána '(' za 'while'");
-        current_token = scanner_next();
+        get_next_token();
         parse_expression();
         if (current_token.type != TOK_RPAREN) error_exit(ERR_SYNTAX, "Očekávána ')' za podmínkou");
-        current_token = scanner_next();
+        get_next_token();
 
         if (current_token.type != TOK_KW_DO) error_exit(ERR_SYNTAX, "Očekáváno 'do' po podmínce while");
-        current_token = scanner_next();
+        get_next_token();
 
         if (current_token.type != TOK_EOL) error_exit(ERR_SYNTAX, "Očekáván konec řádku za 'do'");
-        current_token = scanner_next();
+        get_next_token();
 
         if (current_token.type != TOK_INDENT) error_exit(ERR_SYNTAX, "Očekáváno odsazení po 'do'");
-        current_token = scanner_next();
+        get_next_token();
 
         // Tělo while bloku
         while (current_token.type != TOK_DEDENT) {
-            if (current_token.type == TOK_EOL) { current_token = scanner_next(); continue; }
+            if (current_token.type == TOK_EOL) { get_next_token(); continue; }
             parse_statement();
         }
-        current_token = scanner_next(); 
+        get_next_token(); 
         
         return ERR_OK;
     }
 
     // 4. Zpracování přiřazení do existující proměnné nebo volání funkce
     else if (current_token.type == TOK_IDENT) {
-        current_token = scanner_next(); 
+        get_next_token(); 
 
         // a) Přiřazení (např. x = 10)
         if (current_token.type == TOK_ASSIGN) {
-            current_token = scanner_next(); 
+            get_next_token(); 
             parse_expression();
             
             if (current_token.type != TOK_EOL && current_token.type != TOK_EOF) {
                 error_exit(ERR_SYNTAX, "Očekáván konec řádku za přiřazením");
             }
-            if (current_token.type == TOK_EOL) current_token = scanner_next();
+            if (current_token.type == TOK_EOL) get_next_token();
         }
         // b) Volání funkce (např. write(x, "test"))
         else if (current_token.type == TOK_LPAREN) {
-            current_token = scanner_next(); 
+            get_next_token(); 
             
             // Argumenty oddělené čárkou
             if (current_token.type != TOK_RPAREN) {
                 while (true) {
                     parse_expression();
                     if (current_token.type == TOK_COMMA) {
-                        current_token = scanner_next(); 
+                        get_next_token(); 
                     } else if (current_token.type == TOK_RPAREN) {
                         break; 
                     } else {
@@ -222,12 +353,12 @@ int parse_statement() {
                     }
                 }
             }
-            current_token = scanner_next(); 
+            get_next_token(); 
 
             if (current_token.type != TOK_EOL && current_token.type != TOK_EOF) {
                 error_exit(ERR_SYNTAX, "Očekáván konec řádku za voláním funkce");
             }
-            if (current_token.type == TOK_EOL) current_token = scanner_next();
+            if (current_token.type == TOK_EOL) get_next_token();
         } 
         else {
             error_exit(ERR_SYNTAX, "Očekáváno '=' pro přiřazení nebo '(' pro volání funkce");
@@ -238,23 +369,18 @@ int parse_statement() {
 
     // 5. Návrat z funkce 
     else if (current_token.type == TOK_KW_RETURN) {
-        current_token = scanner_next();
+        get_next_token();
         parse_expression();
         
         if (current_token.type != TOK_EOL && current_token.type != TOK_EOF) {
             error_exit(ERR_SYNTAX, "Očekáván konec řádku za 'return'");
         }
-        if (current_token.type == TOK_EOL) current_token = scanner_next();
+        if (current_token.type == TOK_EOL) get_next_token();
         
         return ERR_OK;
     }
 
     error_exit(ERR_SYNTAX, "Neočekávaný příkaz v bloku");
-    return ERR_OK;
-}
-
-// Výrazy (precedenční analýza)
-int parse_expression() {
     return ERR_OK;
 }
 
@@ -269,20 +395,20 @@ int parse_control_flow() {
 
 int parse_function_expression() {
     // 1. Def
-    current_token = scanner_next();
+    get_next_token();
 
     // 2. Název funkce
     if (current_token.type != TOK_IDENT) {
         error_exit(ERR_SYNTAX, "Očekáván název funkce po 'def'");
     }
     // TODO: Uložení názvu do tabulky symbolů
-    current_token = scanner_next();
+    get_next_token();
 
     // 3. Levá závorka
     if (current_token.type != TOK_LPAREN) {
         error_exit(ERR_SYNTAX, "Očekávána '(' za názvem funkce");
     }
-    current_token = scanner_next();
+    get_next_token();
 
     // 4. Parametry (kontrola 'identifikátor : Typ')
     if (current_token.type != TOK_RPAREN) {
@@ -291,13 +417,13 @@ int parse_function_expression() {
             if (current_token.type != TOK_IDENT) {
                 error_exit(ERR_SYNTAX, "Očekáván název parametru");
             }
-            current_token = scanner_next();
+            get_next_token();
 
             // Dvojtečka
             if (current_token.type != TOK_COLON) {
                 error_exit(ERR_SYNTAX, "Očekávána ':' za názvem parametru");
             }
-            current_token = scanner_next();
+            get_next_token();
 
             // Datový typ parametru
             if (current_token.type != TOK_KW_INT && current_token.type != TOK_KW_DOUBLE && 
@@ -305,11 +431,11 @@ int parse_function_expression() {
                 current_token.type != TOK_KW_BOOLEAN) {
                 error_exit(ERR_SYNTAX, "Očekáván datový typ parametru (Int, Double, String, Unit, Boolean)");
             }
-            current_token = scanner_next();
+            get_next_token();
 
             // Čárka pro další parametr, nebo konec závorky
             if (current_token.type == TOK_COMMA) {
-                current_token = scanner_next(); 
+                get_next_token(); 
             } else if (current_token.type == TOK_RPAREN) {
                 break; 
             } else {
@@ -318,38 +444,38 @@ int parse_function_expression() {
         }
     }
     
-    current_token = scanner_next();
+    get_next_token();
 
     // 5. Návratový typ (očekáváme ':' a typ)
     if (current_token.type != TOK_COLON) {
         error_exit(ERR_SYNTAX, "Očekávána ':' a návratový typ funkce");
     }
-    current_token = scanner_next();
+    get_next_token();
 
     if (current_token.type != TOK_KW_INT && current_token.type != TOK_KW_DOUBLE && 
         current_token.type != TOK_KW_STRING && current_token.type != TOK_KW_UNIT &&
         current_token.type != TOK_KW_BOOLEAN) {
         error_exit(ERR_SYNTAX, "Očekáván platný datový typ (Int, Double, String, Unit, Boolean)");
     }
-    current_token = scanner_next();
+    get_next_token();
 
     // 6. Znak přiřazení '='
     if (current_token.type != TOK_ASSIGN) {
         error_exit(ERR_SYNTAX, "Očekáváno '=' před tělem funkce");
     }
-    current_token = scanner_next();
+    get_next_token();
 
     // 7. Konec řádku před začátkem bloku
     if (current_token.type != TOK_EOL) {
         error_exit(ERR_SYNTAX, "Očekáván konec řádku za '='");
     }
-    current_token = scanner_next();
+    get_next_token();
 
     // 8. Začátek bloku (odsazení)
     if (current_token.type != TOK_INDENT) {
         error_exit(ERR_SYNTAX, "Očekáváno odsazení (INDENT) pro tělo funkce");
     }
-    current_token = scanner_next();
+    get_next_token();
 
     // 9. Čtení těla funkce 
     while (current_token.type != TOK_DEDENT) {
@@ -359,7 +485,7 @@ int parse_function_expression() {
         
         // Přeskočíme prázdné řádky v těle funkce
         if (current_token.type == TOK_EOL) {
-            current_token = scanner_next();
+            get_next_token();
             continue;
         }
 
@@ -368,7 +494,7 @@ int parse_function_expression() {
     }
 
     // 10. Konec bloku
-    current_token = scanner_next();
+    get_next_token();
 
     return ERR_OK;
 }

@@ -10,11 +10,25 @@
 #include "error.h"
 #include "symtable.h"
 #include <string.h>
+#include <stdlib.h> 
 
 // Aktuálně zpracovávaný token
 static tToken current_token;
 
-#include <stdlib.h> 
+// Ukazatele na tabulky symbolů
+static tSymTable* global_table = NULL;
+static tSymTable* local_table = NULL;
+
+// Převod tokenu na datový typ pro symtable
+static tDataType token_to_type(tTokenType type) {
+    switch(type) {
+        case TOK_KW_INT: return TYPE_INT;
+        case TOK_KW_DOUBLE: return TYPE_DOUBLE;
+        case TOK_KW_STRING: return TYPE_STRING;
+        case TOK_KW_BOOLEAN: return TYPE_BOOLEAN;
+        default: return TYPE_UNIT;
+    }
+}
 
 // Bezpečné načtení dalšího tokenu s uvolněním paměti toho předchozího
 static void get_next_token() {
@@ -172,8 +186,14 @@ int parse_function_expression();
 
 // Hlavní funkce
 int parse() {
-    current_token = scanner_next();
-    return parse_program();
+    global_table = symtable_create();
+    if (!global_table) error_exit(ERR_INTERNAL, "Chyba alokace globalni tabulky");
+    
+    current_token = scanner_next(); // Záměrně původní načtení
+    int result = parse_program();
+    
+    symtable_free(global_table);
+    return result;
 }
 
 int parse_program() {
@@ -217,32 +237,61 @@ int parse_program() {
 int parse_statement() {
     // 1. Zpracování definice proměnné (var / val)
     if (current_token.type == TOK_KW_VAR || current_token.type == TOK_KW_VAL) {
+        bool is_mutable = (current_token.type == TOK_KW_VAR); // true pro var, false pro val
         get_next_token();
 
         if (current_token.type != TOK_IDENT) error_exit(ERR_SYNTAX, "Očekáván název proměnné");
+        
+        // Zkopírujeme si název, než se posuneme na další token
+        char* var_name = strdup(current_token.value.str_val);
         get_next_token();
 
+        tDataType var_type = TYPE_UNIT;
         if (current_token.type == TOK_COLON) {
             get_next_token();
             if (current_token.type != TOK_KW_INT && current_token.type != TOK_KW_DOUBLE && 
                 current_token.type != TOK_KW_STRING && current_token.type != TOK_KW_UNIT &&
                 current_token.type != TOK_KW_BOOLEAN) {
+                free(var_name);
                 error_exit(ERR_SYNTAX, "Očekáván datový typ proměnné");
             }
+            var_type = token_to_type(current_token.type); // Z minula připravená funkce
             get_next_token();
         } else {
+            free(var_name);
             error_exit(ERR_SYNTAX, "Očekávána ':' a datový typ");
         }
 
-        if (current_token.type != TOK_ASSIGN) error_exit(ERR_SYNTAX, "Očekáváno '='");
+        if (current_token.type != TOK_ASSIGN) {
+            free(var_name);
+            error_exit(ERR_SYNTAX, "Očekáváno '='");
+        }
         get_next_token();
 
+        // Tady se později bude validovat, jestli typ výrazu sedí s var_type
         parse_expression();
 
         if (current_token.type != TOK_EOL && current_token.type != TOK_EOF) {
+            free(var_name);
             error_exit(ERR_SYNTAX, "Očekáván konec řádku za definicí");
         }
         if (current_token.type == TOK_EOL) get_next_token();
+        
+        // --- Vložení do správné tabulky symbolů ---
+        tData v_data;
+        v_data.kind = SYM_VAR;
+        v_data.attribute.var.typeInfo.type = var_type;
+        v_data.attribute.var.isMutable = is_mutable;
+
+        // Pokud jsme ve funkci, dáváme to do lokální, jinak do globální
+        tSymTable* target_table = (local_table != NULL) ? local_table : global_table;
+        
+        if (symtable_insert(target_table, var_name, v_data) == INSERT_DUPLICATE) {
+            free(var_name);
+            // Sémantická chyba (zřejmě kód 3 podle běžných pravidel IFJ, uprav dle zadání)
+            error_exit(ERR_REDEF, "Redefinice proměnné"); 
+        }
+        free(var_name);
         
         return ERR_OK;
     }
@@ -401,8 +450,14 @@ int parse_function_expression() {
     if (current_token.type != TOK_IDENT) {
         error_exit(ERR_SYNTAX, "Očekáván název funkce po 'def'");
     }
-    // TODO: Uložení názvu do tabulky symbolů
+    
+    // Uložení jména předtím než se posuneme dál
+    char* func_name = strdup(current_token.value.str_val);
     get_next_token();
+
+    // Založení nového lokálního rámce pro parametry a tělo funkce
+    local_table = symtable_create();
+    if (!local_table) error_exit(ERR_INTERNAL, "Chyba alokace lokalni tabulky");
 
     // 3. Levá závorka
     if (current_token.type != TOK_LPAREN) {
@@ -495,6 +550,25 @@ int parse_function_expression() {
 
     // 10. Konec bloku
     get_next_token();
+
+    // Vložení samotné funkce do globální tabulky
+    tData f_data;
+    f_data.kind = SYM_FUNC;
+    f_data.attribute.func.paramCount = 0; // TODO: Doplnit počítání parametrů později
+    f_data.attribute.func.params = NULL;
+    f_data.attribute.func.isDefined = true;
+    
+    // Návratový typ bychom správně měli vyčíst, pro teď tam dáme UNIT
+    f_data.attribute.func.returnType.type = TYPE_UNIT; 
+    
+    if (symtable_insert(global_table, func_name, f_data) == INSERT_DUPLICATE) {
+        error_exit(ERR_REDEF, "Redefinice funkce"); // Sémantická chyba
+    }
+    free(func_name);
+
+    // Zrušení lokální tabulky při opuštění funkce
+    symtable_free(local_table);
+    local_table = NULL;
 
     return ERR_OK;
 }

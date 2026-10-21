@@ -246,7 +246,7 @@ static bool handle_indent(void)
         added = true;
     }
     if (pending_indent != indent_stack[indent_top])
-        lex_error(line, "odsazení neodpovídá žádné předchozí úrovni");
+        error_exit(ERR_SYNTAX, "řádek %d: odsazení neodpovídá žádné předchozí úrovni", line);
     return added;
 }
 
@@ -292,18 +292,24 @@ tToken scanner_next(void)
     if (q_count > 0)
         return queue_pop();
 
+    bool saw_tab = false;
     if (at_line_start) {
         at_line_start = false;
         pending_indent = 0;
         int c;
         while ((c = next_char()) == ' ' || c == '\t') {
             if (c == '\t')
-                lex_error(line, "tabulátor v odsazení");
+                saw_tab = true;
             pending_indent++;
+        }
+        if(saw_tab){
+            if(c != EOF || c != '\n'){
+                lex_error(line, "tab na neprázdném řádku");
+            }
         }
         unget_char(c); // první znak, který není mezera, patří dalšímu kroku
         if (paren_depth > 0 && c != '\n' && c != EOF && pending_indent <= indent_stack[indent_top])
-            lex_error(line, "řádek uvnitř závorek musí být odsazen víc");
+            error_exit(ERR_SYNTAX, "řádek %d: řádek v závorkách musí být více odsazen", line);
     }
 
     buf_reset();
@@ -345,7 +351,7 @@ tToken scanner_next(void)
             }
 
             if (expect_eol && c != '/')
-                lex_error(line, "za víceřádkovým komentářem musí být konec řádku");
+                error_exit(ERR_SYNTAX, "řádek %d: za víceřádkovým komentářem musí být konec řádku", line);
 
             if (!line_has_token && c != '/' && handle_indent()) {
                 unget_char(c);
@@ -595,8 +601,6 @@ tToken scanner_next(void)
                 state = S_NUM_INT_DOT;
             } else if (c == 'e' || c == 'E') {
                 state = S_NUM_EXP_START;
-            } else if (is_letter(c)) {
-                lex_error(tok_line, "písmeno nesmí následovat hned za číslem ");
             } else if (is_digit(c)) {
                 // zustat v S_NUM+INT
             } else {
@@ -623,9 +627,6 @@ tToken scanner_next(void)
                 state = S_NUM_INT_DOT;
             } else if (c == 'e' || c == 'E') {
                 state = S_NUM_EXP_START;
-            } else if (is_ident_char(c)) {
-                lex_error(tok_line, "nenulové číslo nesmí začínat nulou / podtržítko "
-                                    "musí být mezi číslicemi");
             } else {
                 unget_char(c);
                 tToken token = make_token(TOK_INT_LIT, tok_line);
@@ -670,8 +671,6 @@ tToken scanner_next(void)
             } else if (c == 'd' || c == 'D') {
                 state = S_NUM_SUFFIX;
                 break;
-            } else if (is_letter(c)) {
-                lex_error(tok_line, "písmeno nesmí následovat hned za číslem");
             } else {
                 unget_char(c);
                 tToken token = make_token(TOK_DOUBLE_LIT, tok_line);
@@ -690,8 +689,6 @@ tToken scanner_next(void)
             } else if (c == 'd' || c == 'D') {
                 state = S_NUM_SUFFIX;
                 break;
-            } else if (is_letter(c)) {
-                lex_error(tok_line, "písmeno nesmí následovat hned za číslem");
             } else {
                 unget_char(c);
                 tToken token = make_token(TOK_DOUBLE_LIT, tok_line);
@@ -702,15 +699,10 @@ tToken scanner_next(void)
             break;
 
         case S_NUM_SUFFIX:
-            if (is_ident_char(c)) {
-                lex_error(tok_line, "za příponou d/D nesmí nic následovat");
-                break;
-            } else {
-                unget_char(c);
-                tToken token = make_token(TOK_DOUBLE_LIT, tok_line);
-                token.value.double_val = strtod(buf, NULL);
-                return token;
-            }
+            unget_char(c);
+            tToken token = make_token(TOK_DOUBLE_LIT, tok_line);
+            token.value.double_val = strtod(buf, NULL);
+            return token;
 
         case S_NUM_EXP_SIGN:
             if (is_digit(c)) {
@@ -764,7 +756,7 @@ tToken scanner_next(void)
             }
             break;
 
-        case S_STRING_EMPTY:
+        case S_STRING_EMPTY: 
             if (c == '"') {
                 state = S_ML_STRING;
             } else {

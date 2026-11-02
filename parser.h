@@ -14,4 +14,4 @@
 // Hlavní funkce
 int parse(tSymTable* global_symtable);
 
-#endif // PARSER_H
+#endif 

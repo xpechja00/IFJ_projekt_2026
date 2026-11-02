@@ -9,6 +9,7 @@
 #include "scanner.h"
 #include "error.h"
 #include "symtable.h"
+#include "expression.h"
 #include <string.h>
 #include <stdlib.h> 
 
@@ -89,6 +90,23 @@ int parse_function(tSymTable* global_symtable){
     }
     get_next_token();
 
+    // Příprava dat
+    tData data;
+    data.kind = SYM_FUNC;
+    data.attribute.func.paramCount = 0;
+    data.attribute.func.params = NULL;
+    data.attribute.func.isDefined = true;
+    data.attribute.func.returnType.type = TYPE_UNIT; 
+
+    // Vložení do tabulky symbolů
+    tInsertResult result = symtable_insert(global_symtable, func_name, data);
+    if (result == INSERT_ERROR) {
+        return ERR_INTERNAL; 
+    }
+    else if (result == INSERT_DUPLICATE){
+        return ERR_REDEF;
+    }
+
     // Parametry
     // (
     if (current_token.type != TOK_LPAREN){
@@ -143,25 +161,20 @@ int parse_function(tSymTable* global_symtable){
         }
         get_next_token(); 
     }
-    
 
-    // Příprava dat
-    tData data;
-    data.kind = SYM_FUNC;
-    data.attribute.func.paramCount = 0;
-    data.attribute.func.params = NULL;
-    data.attribute.func.isDefined = true;
-    data.attribute.func.returnType.type = TYPE_UNIT; 
+    //=
+    if (current_token.type != TOK_ASSIGN) { 
+        return ERR_SYNTAX;
+    }
+    get_next_token();
 
-    // Vložení do tabulky symbolů
-    tInsertResult result = symtable_insert(global_symtable, func_name, data);
-    if (result == INSERT_ERROR) {
-        return ERR_INTERNAL; 
+    if (parse_expression() != ERR_OK) {
+        return ERR_SYNTAX;
     }
-    else if (result == INSERT_DUPLICATE){
-        return ERR_REDEF;
-    }
-    return ERR_OK;
+}
+
+int parse_expression() {
+    return parse_expression_psa;
 }
 
 int parse_val(){

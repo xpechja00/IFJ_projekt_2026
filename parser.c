@@ -14,10 +14,17 @@
 #include <stdlib.h> 
 
 static tToken current_token;
+static tToken lookahead_token;  
+static bool has_lookahead = false; 
 
-// Načtení dalšího tokenu
-static void get_next_token() {
-    current_token = scanner_next();
+// Načtení dalšího tokenu (spřípravou na lookahead)
+void get_next_token() {
+    if (has_lookahead) {
+        current_token = lookahead_token;
+        has_lookahead = false;
+    } else {
+        current_token = scanner_next();
+    }
 }
 
 // Hlavní funkce
@@ -26,20 +33,26 @@ int parse(tSymTable* global_symtable){
     if (parse_prolog() != ERR_OK){
         return ERR_SYNTAX;
     }
-    while (current_token.type != TOK_EOF)
-    {   
-        if (current_token.type == TOK_KW_DEF || current_token.type == TOK_ANNOT_MAIN) {
-            if (parse_function(global_symtable) != ERR_OK){
+    while (current_token.type != TOK_EOF){   
+        if (current_token.type == TOK_EOL) {
+            get_next_token();
+        }
+
+        if (current_token.type == TOK_ANNOT_MAIN) {
+            get_next_token(); 
+        }
+        
+        if (current_token.type == TOK_KW_DEF) {
+            if (parse_function(global_symtable) != ERR_OK) {
                 return ERR_SYNTAX;
             }
-        }
-        else {
-            return ERR_SYNTAX; 
         } 
-        
+        else {
+            return ERR_SYNTAX;
+        }
     }
-    return ERR_OK;
-} 
+        return ERR_OK;
+    } 
 
 // Prolog: import ifj26.*
 int parse_prolog(){
@@ -167,32 +180,228 @@ int parse_function(tSymTable* global_symtable){
         return ERR_SYNTAX;
     }
     get_next_token();
+    
+    // Tělo funkce
+    if (current_token.type == TOK_EOL) {
+        get_next_token(); 
 
-    if (parse_expression() != ERR_OK) {
-        return ERR_SYNTAX;
+        // Začátek bloku
+        if (current_token.type != TOK_INDENT) {
+            return ERR_SYNTAX;
+        }
+        get_next_token(); 
+
+        // Příkazy bloku
+        while (current_token.type != TOK_DEDENT && current_token.type != TOK_EOF) {
+            int err = parse_statement(); 
+            if (err != ERR_OK) {
+                return err;
+            }
+
+            if (current_token.type == TOK_EOL) {
+                get_next_token();
+            } else if (current_token.type != TOK_DEDENT) {
+                return ERR_SYNTAX; 
+            }
+        }
+
+        // Konec bloku
+        if (current_token.type != TOK_DEDENT) {
+            return ERR_SYNTAX;
+        }
+        get_next_token(); 
+
+    } 
+    else {
+        // Jednořádkové tělo 
+        if (parse_expression() != ERR_OK) {
+            return ERR_SYNTAX;
+        }
     }
+
+    return ERR_OK; 
 }
 
 int parse_expression() {
-    return parse_expression_psa;
+    return parse_expression_psa();
 }
 
-int parse_val(){
+// Naleznutí dalšího tokenu bez spotřebování současného
+tToken parser_peek_token() {
+    if (!has_lookahead) {
+        lookahead_token = scanner_next();
+        has_lookahead = true;
+    }
+    return lookahead_token;
+}
+
+
+// Var/Val
+int parse_var() {
+    get_next_token();
+
+    // Identifikátor
+    if (current_token.type != TOK_IDENT) {
+        return ERR_SYNTAX;
+    }
+    get_next_token();
+
+    // :
+    if (current_token.type == TOK_COLON) {
+        get_next_token();
+
+        // Datový typ
+        if (current_token.type != TOK_KW_INT && current_token.type != TOK_KW_DOUBLE && current_token.type != TOK_KW_STRING && current_token.type != TOK_KW_BOOLEAN) {
+            return ERR_SYNTAX;
+        }
+        get_next_token();
+    }
+
+    // =
+    if (current_token.type != TOK_ASSIGN) {
+        return ERR_SYNTAX;
+    }
+    get_next_token();
+    return parse_expression();
+}
+
+// Return
+int parse_return() {
+    get_next_token(); 
+
+    if (current_token.type == TOK_EOL || current_token.type == TOK_DEDENT) {
+        return ERR_OK; 
+    }
+
+    return parse_expression();
+}
+
+// Příkazy
+int parse_statement() {
+    // Var nebo val
+    if (current_token.type == TOK_KW_VAL || current_token.type == TOK_KW_VAR) {
+        return parse_var();
+    }
+
+    // Return
+    if (current_token.type == TOK_KW_RETURN) {
+        return parse_return();
+    }
+
+    // If 
+    if (current_token.type == TOK_KW_IF) {
+        return parse_if();
+    }
+
+    // While 
+    if (current_token.type == TOK_KW_WHILE) {
+        return parse_while();
+    }
+
+    // Přiřazení do proměnné
+    if (current_token.type == TOK_IDENT) {
+        // Zjištění dalšího tokenu
+        tToken next = parser_peek_token(); 
+        
+        if (next.type == TOK_ASSIGN) {
+            // Posuny za identifikátor a =
+            get_next_token(); 
+            get_next_token(); 
+            return parse_expression(); 
+        }
+    }
+
+    // Čistý výraz
+    return parse_expression();
+}
+
+// Blok příkazů v if/while
+int parse_block() {
+    if (current_token.type == TOK_EOL) {
+        get_next_token(); 
+
+        if (current_token.type != TOK_INDENT) {
+            return ERR_SYNTAX;
+        }
+        get_next_token(); 
+
+        while (current_token.type != TOK_DEDENT && current_token.type != TOK_EOF) {
+            int err = parse_statement(); 
+            if (err != ERR_OK) {
+                return err;
+            }
+
+            if (current_token.type == TOK_EOL) {
+                get_next_token();
+            } else if (current_token.type != TOK_DEDENT) {
+                return ERR_SYNTAX; 
+            }
+        }
+
+        if (current_token.type != TOK_DEDENT) {
+            return ERR_SYNTAX;
+        }
+        get_next_token(); 
+    } else {
+        // Jednořádkový příkaz
+        if (parse_statement() != ERR_OK) {
+            return ERR_SYNTAX;
+        }
+    }
     return ERR_OK;
 }
 
-int parse_var(){
+// If
+int parse_if() {
+    get_next_token(); 
+
+    // Podmínka
+    if (parse_expression() != ERR_OK) {
+        return ERR_SYNTAX;
+    }
+
+    // Then
+    if (current_token.type != TOK_KW_THEN) {
+        return ERR_SYNTAX;
+    }
+    get_next_token();
+
+    // Tělo then
+    if (parse_block() != ERR_OK) {
+        return ERR_SYNTAX;
+    }
+
+    // Volitelné else
+    if (current_token.type == TOK_KW_ELSE) {
+        get_next_token(); 
+        
+        if (parse_block() != ERR_OK) {
+            return ERR_SYNTAX;
+        }
+    }
+
     return ERR_OK;
 }
 
-int parse_if(){
-    return ERR_OK;
-}
+// While
+int parse_while() {
+    get_next_token(); 
 
-int parse_while(){
-    return ERR_OK;
-}
+    // Podmínka 
+    if (parse_expression() != ERR_OK) {
+        return ERR_SYNTAX;
+    }
 
-int parse_return(){
+    // Do
+    if (current_token.type != TOK_KW_DO) {
+        return ERR_SYNTAX;
+    }
+    get_next_token();
+
+    // Tělo while
+    if (parse_block() != ERR_OK) {
+        return ERR_SYNTAX;
+    }
+
     return ERR_OK;
 }

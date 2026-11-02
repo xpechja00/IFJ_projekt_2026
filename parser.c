@@ -33,7 +33,32 @@ int parse(tSymTable* global_symtable){
     return ERR_OK;
 } 
 
+// Prolog: import ifj26.*
 int parse_prolog(){
+    // import
+    if (current_token.type != TOK_KW_IMPORT) {
+        return ERR_SYNTAX; 
+    }
+    get_next_token();
+
+    // identifikátor ifj26
+    if (current_token.type != TOK_IDENT || current_token.value.str_val == NULL || strcmp(current_token.value.str_val, "ifj26") != 0) {
+        return ERR_SYNTAX;
+    }
+    get_next_token();
+
+    //.
+    if (current_token.type != TOK_DOT) {
+        return ERR_SYNTAX;
+    }
+    get_next_token();
+
+    //*
+    if (current_token.type != TOK_STAR) {
+        return ERR_SYNTAX;
+    }
+    get_next_token();
+
     return ERR_OK;
 }
 

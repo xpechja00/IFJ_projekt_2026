@@ -1,3 +1,10 @@
+/*
+ * Projekt: Implementace překladače imperativního jazyka IFJ26
+ * Modul:   expression.c - precedenční syntaktická analýza
+ *
+ * Autor: xdundrm00
+ *
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include "expression.h"
@@ -140,30 +147,28 @@ int parse_expression_psa() {
         // Aktuální vstupní symbol
         tPrecedenceSymbol input_sym = token_to_precedence_symbol(&current_token);
         
-        if (input_sym == E_NONE && top_term == E_DOLLAR) {
-            break;
-        }
-        if (input_sym == E_NONE) {
-            result = ERR_SYNTAX;
-            break;
-        }
-
+        // Zástupný symbol pro ukončení výrazu
+        tPrecedenceSymbol table_input_sym = (input_sym == E_NONE) ? E_DOLLAR : input_sym;
+        
         // Zjištění vztahu z tabulky
-        char relation = precedence_table[top_term][input_sym];
+        char relation = precedence_table[top_term][table_input_sym];
 
         // Shift nebo rovnost
         if (relation == '<' || relation == '=') {
-            if (!stack_push(&stack, input_sym)) {
+            if (!stack_push(&stack, table_input_sym)) {
                 result = ERR_INTERNAL;
                 break;
             }
-            get_next_token();
+            // Zkonzumovat token pouze pokud je platnou součástí výrazu
+            if (input_sym != E_NONE) {
+                get_next_token();
+            }
         } 
 
         // Redukce
         else if (relation == '>') {
             // Pravidlo: E -> i
-            if (stack.top->symbol == E_OPERAND && stack.top->next->symbol != E_EXPR) {
+            if (stack.top->symbol == E_OPERAND && stack.top->next != NULL && stack.top->next->symbol != E_EXPR) {
                 stack_pop(&stack);
                 if (!stack_push(&stack, E_EXPR)) {
                     result = ERR_INTERNAL;
@@ -172,8 +177,8 @@ int parse_expression_psa() {
             }
             // Pravidlo: E -> ( E )
             else if (stack.top->symbol == E_RPAREN && 
-                     stack.top->next->symbol == E_EXPR && 
-                     stack.top->next->next->symbol == E_LPAREN) {
+                     stack.top->next != NULL && stack.top->next->symbol == E_EXPR && 
+                     stack.top->next->next != NULL && stack.top->next->next->symbol == E_LPAREN) {
                 stack_pop(&stack); // )
                 stack_pop(&stack); // E
                 stack_pop(&stack); // (
@@ -184,10 +189,11 @@ int parse_expression_psa() {
             }
             // Pravidlo: E -> E op E
             else if (stack.top->symbol == E_EXPR && 
+                     stack.top->next != NULL &&
                      (stack.top->next->symbol == E_PLUS_MINUS || 
                       stack.top->next->symbol == E_MUL_DIV || 
                       stack.top->next->symbol == E_REL) && 
-                     stack.top->next->next->symbol == E_EXPR) {
+                     stack.top->next->next != NULL && stack.top->next->next->symbol == E_EXPR) {
                 stack_pop(&stack); // E
                 stack_pop(&stack); // op
                 stack_pop(&stack); // E
@@ -205,7 +211,7 @@ int parse_expression_psa() {
 
         // Akceptace
         else if (relation == 'A') {
-            if (stack.top->symbol == E_EXPR && stack.top->next->symbol == E_DOLLAR) {
+            if (stack.top->symbol == E_EXPR && stack.top->next != NULL && stack.top->next->symbol == E_DOLLAR) {
                 result = ERR_OK;
             } else {
                 result = ERR_SYNTAX;

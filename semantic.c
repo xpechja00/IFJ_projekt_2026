@@ -439,6 +439,9 @@ int sem_check_return(tSemContext* context, bool has_expr, tTypeInfo expr_type)
 // kontrola koncového výrazu těla funkce
 int sem_check_func_body_result(tSemContext* context, tTypeInfo body_type)
 {
+    if (context == NULL || context->in_function == false) {
+        return ERR_INTERNAL;
+    }
 
     if (is_valid_value_type(body_type) == false) {
         return ERR_TYPE;
@@ -464,7 +467,7 @@ int sem_check_condition(tTypeInfo cond_type)
 {
     // podmínka musí být boolean
     if (cond_type.type != TYPE_BOOLEAN) {
-        return ERR_SYNTAX;
+        return ERR_TYPE;
     }
     return ERR_OK;
 }
@@ -577,7 +580,7 @@ int sem_check_binary_op(tTokenType op, tTypeInfo left, tTypeInfo right, tTypeInf
 
     case TOK_EQ:
     case TOK_NEQ:
-        if ((left_num == false && right_num == false) || (left.type == right.type)) {
+        if ((left_num == true && right_num == true) || (left.type == right.type)) {
             *out_type = make_type(TYPE_BOOLEAN);
             return ERR_OK;
         }

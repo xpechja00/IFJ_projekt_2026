@@ -10,6 +10,7 @@
 // Indexy pro precedenční tabulku 
 typedef enum { 
     E_PLUS_MINUS, // + - 
+    E_UNARY_MINUS,  // - (unární)
     E_MUL_DIV,    // * / 
     E_REL,        // relační operátory (<, <=, >, >=, ==, !=) 
     E_OPERAND,    // operandy (identifikátory i, literály) 
@@ -33,16 +34,17 @@ typedef struct {
     tStackItem* top; 
 } tStack;
 
-// Precedenční tabulka 
-static const char precedence_table[7][7] = { 
-//             + -   * /   rel    i     (     )     $ 
-/* + -  */    { '>',  '<',  '>',  '<',  '<',  '>',  '>' },
-/* * /  */    { '>',  '>',  '>',  '<',  '<',  '>',  '>' },
-/* rel  */    { '<',  '<',  ' ',  '<',  '<',  '>',  '>' },
-/* i    */    { '>',  '>',  '>',  ' ',  ' ',  '>',  '>' },
-/* (    */    { '<',  '<',  '<',  '<',  '<',  '=',  ' ' },
-/* )    */    { '>',  '>',  '>',  ' ',  ' ',  '>',  '>' },
-/* $    */    { '<',  '<',  '<',  '<',  '<',  ' ',  'A' } 
+// Precedenční tabulka  
+static const char precedence_table[8][8] = { 
+//                    + -    u-    * /   rel    i     (     )     $ 
+/* + -       */     { '>',  '<',  '<',  '>',  '<',  '<',  '>',  '>' },
+/* unární -  */     { '>',  '<',  '>',  '>',  '<',  '<',  '>',  '>' },
+/* * /       */     { '>',  '<',  '>',  '>',  '<',  '<',  '>',  '>' },
+/* rel       */     { '<',  '<',  '<',  '>',  '<',  '<',  '>',  '>' },
+/* i         */     { '>',  ' ',  '>',  '>',  ' ',  ' ',  '>',  '>' },
+/* (         */     { '<',  '<',  '<',  '<',  '<',  '<',  '=',  ' ' },
+/* )         */     { '>',  '>',  '>',  '>',  ' ',  ' ',  '>',  '>' },
+/* $         */     { '<',  '<',  '<',  '<',  '<',  '<',  ' ',  'A' } 
 };
 
 // Pomocné funkce pro zásobník 
@@ -89,10 +91,15 @@ static void stack_free(tStack* s) {
 }
 
 // Mapování tokenu 
-static tPrecedenceSymbol token_to_precedence_symbol(tToken* token) { 
+static tPrecedenceSymbol token_to_precedence_symbol(tToken* token, tPrecedenceSymbol top_term) { 
     switch (token->type) { 
         case TOK_PLUS: 
         case TOK_MINUS: 
+            if (top_term == E_PLUS_MINUS || top_term == E_UNARY_MINUS || 
+                top_term == E_MUL_DIV || top_term == E_REL || 
+                top_term == E_LPAREN || top_term == E_DOLLAR) {
+                return E_UNARY_MINUS;
+            }
             return E_PLUS_MINUS;
         case TOK_STAR:
         case TOK_SLASH:
@@ -120,7 +127,6 @@ static tPrecedenceSymbol token_to_precedence_symbol(tToken* token) {
 
 // Precedenční analýza výrazu 
 extern tToken current_token; 
-extern int get_next_token();
 
 int parse_expression_psa(tSemContext* ctx, tSymTable* local, tTypeInfo* out_type) { 
     tStack stack; 
@@ -139,7 +145,7 @@ int parse_expression_psa(tSemContext* ctx, tSymTable* local, tTypeInfo* out_type
 
     while (1) {
         tPrecedenceSymbol top_term = stack_top_terminal(&stack);
-        tPrecedenceSymbol input_sym = token_to_precedence_symbol(&current_token);
+        tPrecedenceSymbol input_sym = token_to_precedence_symbol(&current_token, top_term);
         tPrecedenceSymbol table_input_sym = (input_sym == E_NONE) ? E_DOLLAR : input_sym;
         
         char relation = precedence_table[top_term][table_input_sym];
@@ -219,6 +225,29 @@ int parse_expression_psa(tSemContext* ctx, tSymTable* local, tTypeInfo* out_type
                     break;
                 }
             }
+
+            // Pravidlo: E -> - E (unární minus)
+            else if (stack.top->symbol == E_EXPR && 
+                     stack.top->next != NULL && stack.top->next->symbol == E_UNARY_MINUS) {
+                
+                tTypeInfo operand_type = stack.top->type;
+                
+                stack_pop(&stack); // E
+                stack_pop(&stack); // unární minus
+                
+                tTypeInfo result_type;
+                int sem_err = sem_check_unary_op(TOK_MINUS, operand_type, &result_type);
+                if (sem_err != ERR_OK) {
+                    result = sem_err;
+                    break;
+                }
+
+                if (!stack_push(&stack, E_EXPR, dummy_token, result_type)) {
+                    result = ERR_INTERNAL;
+                    break;
+                }
+            }
+
             else {
                 result = ERR_SYNTAX;
                 break;

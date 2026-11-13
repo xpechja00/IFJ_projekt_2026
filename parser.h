@@ -14,4 +14,8 @@
 // Hlavní funkce
 int parse(tSymTable* global_symtable);
 
+extern tToken current_token;
+
+void get_next_token(void);
+
 #endif 

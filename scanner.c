@@ -303,7 +303,7 @@ tToken scanner_next(void)
             pending_indent++;
         }
         if(saw_tab){
-            if(c != EOF || c != '\n'){
+            if(c != EOF && c != '\n'){
                 lex_error(line, "tab na neprázdném řádku");
             }
         }

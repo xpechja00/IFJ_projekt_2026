@@ -10,6 +10,7 @@
 #include "error.h"
 #include "symtable.h"
 #include "expression.h"
+#include "semantic.h"
 #include <string.h>
 #include <stdlib.h> 
 
@@ -19,6 +20,10 @@ static bool has_lookahead = false;
 
 // Ukazatel na lokální tabulku symbolů aktuálně parsované funkce
 static tSymTable* current_local_table = NULL;
+
+// Kontext sémantické analýzy a typ posledního výrazu
+static tSemContext sem_context;
+static tTypeInfo last_expr_type = { TYPE_UNIT, TYPE_UNIT };
 
 // Počet vstupních funkcí
 static int main_function_count = 0;
@@ -45,8 +50,13 @@ void get_next_token() {
 
 // Hlavní funkce
 int parse(tSymTable* global_symtable){
+    // >> Inicializace sémantického kontextu a vestavěných funkcí
+    sem_init(&sem_context, global_symtable);
+
     get_next_token();
     if (parse_prolog() != ERR_OK){
+        // >> Úklid sémantického kontextu
+        sem_cleanup(&sem_context);
         return ERR_SYNTAX;
     }
     while (current_token.type != TOK_EOF){   
@@ -66,24 +76,24 @@ int parse(tSymTable* global_symtable){
         
         if (current_token.type == TOK_KW_DEF) {
             if (parse_function(global_symtable, is_main) != ERR_OK) {
+                // >> Úklid sémantického kontextu
+                sem_cleanup(&sem_context);
                 return ERR_SYNTAX;
             }
         } 
         else {
+            // >> Úklid sémantického kontextu
+            sem_cleanup(&sem_context);
             return ERR_SYNTAX;
         }
     }
 
-    if (main_function_count == 0) {
-        return ERR_UNDEF;
-    }
-
-    if (main_function_count > 1) {
-        return ERR_REDEF;
-    }
-
-    return ERR_OK;
-    } 
+    // >> Kontrola existence právě jedné funkce @main
+    int err = sem_check_main_func(main_function_count);
+    // >> Úklid sémantického kontextu
+    sem_cleanup(&sem_context);
+    return err;
+} 
 
 // Prolog: import ifj26.*
 int parse_prolog(){
@@ -139,35 +149,9 @@ int parse_function(tSymTable* global_symtable, bool is_main){
         main_function_count++;
     }
 
-    // Příprava dat
-    tData data;
-    data.kind = SYM_FUNC;
-    data.attribute.func.paramCount = 0;
-    data.attribute.func.params = NULL;
-    data.attribute.func.isDefined = true;
-    data.attribute.func.returnType.type = TYPE_UNIT; 
-
-    // Vložení do tabulky symbolů
-    tInsertResult result = symtable_insert(global_symtable, func_name, data);
-    if (result == INSERT_ERROR) {
-        return ERR_INTERNAL; 
-    }
-    else if (result == INSERT_DUPLICATE){
-        return ERR_REDEF;
-    }
-
-    // Vytvoření lokální tabulky symbolů pro parametry a lokální proměnné
-    tSymTable* local_table = symtable_create();
-    if (local_table == NULL) {
-        return ERR_INTERNAL;
-    }
-    current_local_table = local_table;
-
     // Parametry
     // (
     if (current_token.type != TOK_LPAREN){
-        symtable_free(local_table);
-        current_local_table = NULL;
         return ERR_SYNTAX;
     }
     get_next_token();
@@ -189,8 +173,6 @@ int parse_function(tSymTable* global_symtable, bool is_main){
         if (current_token.type != TOK_IDENT) {
             free(params_arr);
             free(param_names);
-            symtable_free(local_table);
-            current_local_table = NULL;
             return ERR_SYNTAX;
         }
         char* param_name = current_token.value.str_val;
@@ -200,8 +182,6 @@ int parse_function(tSymTable* global_symtable, bool is_main){
         if (current_token.type != TOK_COLON) { 
             free(params_arr);
             free(param_names);
-            symtable_free(local_table);
-            current_local_table = NULL;
             return ERR_SYNTAX;
         }
         get_next_token();
@@ -210,8 +190,6 @@ int parse_function(tSymTable* global_symtable, bool is_main){
         if (current_token.type != TOK_KW_INT && current_token.type != TOK_KW_DOUBLE && current_token.type != TOK_KW_STRING && current_token.type != TOK_KW_UNIT) {
             free(params_arr);
             free(param_names);
-            symtable_free(local_table);
-            current_local_table = NULL;
             return ERR_SYNTAX;
         }
         
@@ -241,8 +219,6 @@ int parse_function(tSymTable* global_symtable, bool is_main){
             if (!params_arr_pointer || !param_names_pointer) {
                 free(params_arr);
                 free(param_names);
-                symtable_free(local_table);
-                current_local_table = NULL;
                 return ERR_INTERNAL;
             }
             params_arr = params_arr_pointer;
@@ -275,34 +251,23 @@ int parse_function(tSymTable* global_symtable, bool is_main){
         else{
             free(params_arr);
             free(param_names);
-            symtable_free(local_table);
-            current_local_table = NULL;
             return ERR_SYNTAX;
         }
         
     }
     get_next_token();
 
-    // Parametry ve vstupní funkci nejsou povoleny
-    if (is_main && param_count > 0) {
-        free(params_arr);
-        free(param_names);
-        symtable_free(local_table);
-        current_local_table = NULL;
-        return ERR_ARGS;
-    }
-
     // Volitelný návratový typ
     tDataType ret_type = TYPE_UNIT;
+    bool has_explicit_ret = false;
     if (current_token.type == TOK_COLON) {
+        has_explicit_ret = true;
         get_next_token(); 
 
         // Datový typ
         if (current_token.type != TOK_KW_INT && current_token.type != TOK_KW_DOUBLE && current_token.type != TOK_KW_STRING && current_token.type != TOK_KW_UNIT) {
             free(params_arr);
             free(param_names);
-            symtable_free(local_table);
-            current_local_table = NULL;
             return ERR_SYNTAX;
         }
         
@@ -323,48 +288,28 @@ int parse_function(tSymTable* global_symtable, bool is_main){
         get_next_token(); 
     }
 
-    // Návratový typ ve vstupní funkci musí být Unit
-    if (is_main && ret_type != TYPE_UNIT) {
+    tTypeInfo ret_type_info = { ret_type, TYPE_UNIT };
+    // >> Registrace hlavičky funkce do globální tabulky symbolů
+    int sem_err = sem_register_function(global_symtable, func_name, ret_type_info, params_arr, param_count, is_main);
+    if (sem_err != ERR_OK) {
         free(params_arr);
         free(param_names);
-        symtable_free(local_table);
-        current_local_table = NULL;
-        return ERR_TYPE;
+        return sem_err;
     }
 
-    // Doplnění parametrů a návratového typu zpět do globální tabulky
-    tData* function = symtable_search(global_symtable, func_name);
-    if (function != NULL) {
-        function->attribute.func.paramCount = param_count;
-        function->attribute.func.params = params_arr;
-        function->attribute.func.returnType.type = ret_type;
-    }
-
-    // Vložení dat z parametrů do lokální tabulky
-    for (int i = 0; i < param_count; i++) {
-        tData param_data;
-        param_data.kind = SYM_VAR;
-        param_data.attribute.var.isMutable = false;
-        param_data.attribute.var.typeInfo = params_arr[i];
-
-        tInsertResult insert = symtable_insert(local_table, param_names[i], param_data);
-        if (insert == INSERT_DUPLICATE) {
-            free(param_names);
-            symtable_free(local_table);
-            current_local_table = NULL;
-            return ERR_REDEF;
-        } else if (insert == INSERT_ERROR) {
-            free(param_names);
-            symtable_free(local_table);
-            current_local_table = NULL;
-            return ERR_INTERNAL;
-        }
-    }
+    // >> Vstup do těla funkce a vložení parametrů do lokální tabulky
+    sem_err = sem_enter_function(&sem_context, ret_type_info, has_explicit_ret, param_names, params_arr, param_count);
+    free(params_arr);
     free(param_names);
+    if (sem_err != ERR_OK) {
+        return sem_err;
+    }
+    current_local_table = sem_context.scopes[sem_context.scope_top];
 
     //=
     if (current_token.type != TOK_ASSIGN) { 
-        symtable_free(local_table);
+        // >> Opouštění funkce a úklid lokálního rozsahu platnosti
+        sem_leave_function(&sem_context);
         current_local_table = NULL;
         return ERR_SYNTAX;
     }
@@ -377,7 +322,8 @@ int parse_function(tSymTable* global_symtable, bool is_main){
 
         // Začátek bloku
         if (current_token.type != TOK_INDENT) {
-            symtable_free(local_table);
+            // >> Opouštění funkce a úklid lokálního rozsahu platnosti
+            sem_leave_function(&sem_context);
             current_local_table = NULL;
             return ERR_SYNTAX;
         }
@@ -412,24 +358,33 @@ int parse_function(tSymTable* global_symtable, bool is_main){
     else {
         // Jednořádkové tělo 
         body_err = parse_expression_or_call();
+        if (body_err == ERR_OK) {
+            // >> Kontrola návratového typu jednořádkového těla funkce
+            body_err = sem_check_func_body_result(&sem_context, last_expr_type);
+        }
     }
 
-    // Odklizení lokální tabulky
-    symtable_free(local_table);
+    // >> Opouštění funkce a úklid lokálního rozsahu platnosti
+    sem_leave_function(&sem_context);
     current_local_table = NULL;
 
     return body_err; 
 }
 
 int parse_expression() {
-    return parse_expression_psa();
+    // >> Precedenční analýza výrazu se sémantickou kontrolou
+    return parse_expression_psa(&sem_context, current_local_table, &last_expr_type);
 }
 
 // Volání funkce
 int parse_function_call() {
+    char* func_name = current_token.value.str_val;
     get_next_token(); 
     get_next_token(); 
     
+    tTypeInfo arg_types[64];
+    int arg_count = 0;
+
     // Parsování argumentů 
     while (current_token.type != TOK_RPAREN) {
         if (current_token.type != TOK_IDENT && current_token.type != TOK_INT_LIT && current_token.type != TOK_DOUBLE_LIT && current_token.type != TOK_STRING_LIT) {
@@ -439,6 +394,15 @@ int parse_function_call() {
             }
             return ERR_SYNTAX;
         }
+
+        tTypeInfo arg_type;
+        // >> Ověření existence a zjištění typu argumentu
+        int term_err = sem_resolve_term(&sem_context, current_local_table, current_token, &arg_type);
+        if (term_err != ERR_OK) {
+            return term_err;
+        }
+        arg_types[arg_count++] = arg_type;
+
         get_next_token(); 
 
         if (current_token.type == TOK_COMMA) {
@@ -453,7 +417,9 @@ int parse_function_call() {
         }
     }
     get_next_token(); 
-    return ERR_OK;
+
+    // >> Sémantická kontrola volání funkce a jejích argumentů
+    return sem_check_function_call(sem_context.global_table, func_name, arg_types, arg_count, &last_expr_type);
 }
 
 // Zjištění zda se jedná o volání funkce či výraz
@@ -491,9 +457,11 @@ int parse_var() {
     tTypeInfo var_type;
     var_type.type = TYPE_UNIT;
     var_type.innerType = TYPE_UNIT;
+    bool has_explicit_type = false;
 
     // :
     if (current_token.type == TOK_COLON) {
+        has_explicit_type = true;
         get_next_token();
 
         // Datový typ
@@ -519,22 +487,8 @@ int parse_var() {
         return err;
     }
 
-    // Vložení lokální proměnné do lokální tabulky symbolů
-    if (current_local_table != NULL) {
-        tData v_data;
-        v_data.kind = SYM_VAR;
-        v_data.attribute.var.isMutable = is_mutable;
-        v_data.attribute.var.typeInfo = var_type;
-
-        tInsertResult res = symtable_insert(current_local_table, var_name, v_data);
-        if (res == INSERT_DUPLICATE) {
-            return ERR_REDEF;
-        } else if (res == INSERT_ERROR) {
-            return ERR_INTERNAL;
-        }
-    }
-
-    return ERR_OK;
+    // >> Kontrola typu a uložení proměnné do tabulky symbolů
+    return sem_define_var(&sem_context, current_local_table, var_name, is_mutable, has_explicit_type, var_type, last_expr_type);
 }
 
 // Return
@@ -542,10 +496,15 @@ int parse_return() {
     get_next_token(); 
 
     if (current_token.type == TOK_EOL || current_token.type == TOK_DEDENT) {
-        return ERR_OK; 
+        tTypeInfo unit_type = { TYPE_UNIT, TYPE_UNIT };
+        // >> Sémantická kontrola prázdného příkazu return
+        return sem_check_return(&sem_context, false, unit_type);
     }
 
-    return parse_expression_or_call();
+    int err = parse_expression_or_call();
+    if (err != ERR_OK) return err;
+    // >> Sémantická kontrola návratového typu v příkazu return
+    return sem_check_return(&sem_context, true, last_expr_type);
 }
 
 // Příkazy
@@ -577,18 +536,13 @@ int parse_statement() {
         tToken next = parser_peek_token(); 
         
         if (next.type == TOK_ASSIGN) {
-            // Kontrola v tabulce symbolů, zda jde o var
-            if (current_local_table != NULL) {
-                tData* v_data = symtable_search(current_local_table, var_name);
-                if (v_data != NULL && v_data->kind == SYM_VAR && !v_data->attribute.var.isMutable) {
-                    return ERR_ASSIGN; 
-                }
-            }
-
             // Posuny za identifikátor a =
             get_next_token(); 
             get_next_token(); 
-            return parse_expression_or_call(); 
+            int err = parse_expression_or_call();
+            if (err != ERR_OK) return err;
+            // >> Kontrola modifikovatelnosti a typové kompatibility při přiřazení
+            return sem_check_assignment(&sem_context, current_local_table, var_name, last_expr_type);
         }
         else if (next.type == TOK_LPAREN) {
             return parse_function_call();
@@ -601,10 +555,16 @@ int parse_statement() {
 
 // Blok příkazů v if/while
 int parse_block() {
+    // >> Vytvoření nového vnořeného rozsahu platnosti (scope)
+    sem_scope_push(&sem_context);
+    current_local_table = sem_context.scopes[sem_context.scope_top];
+
     if (current_token.type == TOK_EOL) {
         get_next_token(); 
 
         if (current_token.type != TOK_INDENT) {
+            // >> Uzavření aktuálního rozsahu platnosti
+            sem_scope_pop(&sem_context);
             return ERR_SYNTAX;
         }
         get_next_token(); 
@@ -612,26 +572,38 @@ int parse_block() {
         while (current_token.type != TOK_DEDENT && current_token.type != TOK_EOF) {
             int err = parse_statement(); 
             if (err != ERR_OK) {
+                // >> Uzavření aktuálního rozsahu platnosti
+                sem_scope_pop(&sem_context);
                 return err;
             }
 
             if (current_token.type == TOK_EOL) {
                 get_next_token();
             } else if (current_token.type != TOK_DEDENT) {
+                // >> Uzavření aktuálního rozsahu platnosti
+                sem_scope_pop(&sem_context);
                 return ERR_SYNTAX; 
             }
         }
 
         if (current_token.type != TOK_DEDENT) {
+            // >> Uzavření aktuálního rozsahu platnosti
+            sem_scope_pop(&sem_context);
             return ERR_SYNTAX;
         }
         get_next_token(); 
     } else {
         // Jednořádkový příkaz
         if (parse_statement() != ERR_OK) {
+            // >> Uzavření aktuálního rozsahu platnosti
+            sem_scope_pop(&sem_context);
             return ERR_SYNTAX;
         }
     }
+
+    // >> Uzavření aktuálního rozsahu platnosti
+    sem_scope_pop(&sem_context);
+    current_local_table = (sem_context.scope_top >= 0) ? sem_context.scopes[sem_context.scope_top] : NULL;
     return ERR_OK;
 }
 
@@ -642,6 +614,10 @@ int parse_if() {
     // Podmínka
     if (parse_expression() != ERR_OK) {
         return ERR_SYNTAX;
+    }
+    // >> Kontrola pravdivostního typu podmínky
+    if (sem_check_condition(last_expr_type) != ERR_OK) {
+        return ERR_TYPE;
     }
 
     // Then
@@ -676,6 +652,10 @@ int parse_while() {
     // Podmínka 
     if (parse_expression() != ERR_OK) {
         return ERR_SYNTAX;
+    }
+    // >> Kontrola pravdivostního typu podmínky
+    if (sem_check_condition(last_expr_type) != ERR_OK) {
+        return ERR_TYPE;
     }
 
     // Do

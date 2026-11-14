@@ -44,7 +44,11 @@ tData* sem_find_var(tSemContext* context, const char* name);
 // zkontroluje že je v programu právě jedna funkce main
 int sem_check_main_func(int main_function_count);
 
+// předběžně zaregistruje hlavičku funkce z prvního průchodu (isDefined = false)
+int sem_declare_function(tSymTable* global_table, const char* name, tTypeInfo return_type, tTypeInfo* params, int param_count);
+
 // zkontroluje hlavičku funkce a uloží ji do globální tabulky symbolů
+// (předběžnou deklaraci z prvního průchodu dodefinuje)
 int sem_register_function(tSymTable* global_table, const char* name, tTypeInfo return_type, tTypeInfo* params, int param_count, bool is_main);
 
 // nastaví kontext funkce a vloží parametry do nové lokální tabulky
@@ -78,9 +82,19 @@ int sem_resolve_term(tSemContext* context, tSymTable* local_table, tToken token,
 int sem_check_unary_op(tTokenType op, tTypeInfo operand, tTypeInfo* out_type);
 
 // zkontroluje binární operátor a určí výsledný typ
-int sem_check_binary_op(tTokenType op, tTypeInfo left, tTypeInfo right, tTypeInfo* out_type);
+int sem_check_binary_op(tSemContext* ctx, tTokenType op, tTypeInfo left, tTypeInfo right, tTypeInfo* out_type);
 
 // ověří kompatibilitu dvou datových typů včetně povolené implicitní konverze
 bool sem_types_compatible(tTypeInfo expected, tTypeInfo actual);
+
+// zkontroluje člen hodnoty (výraz.id) a určí typ výsledku
+int sem_check_member(tTypeInfo receiver, const char* member, tTypeInfo* out_type);
+
+// je typ prázdný seznam List() bez známého typu prvku?
+bool sem_is_untyped_list(tTypeInfo t);
+
+// kontrola členu seznamu (LISTS); v arg_count vrátí počet argumentů typu Int,
+// které člen očekává v závorkách (0 = zapisuje se bez závorek)
+int sem_check_list_member(tTypeInfo receiver, const char* member, int* arg_count, tTypeInfo* out_type);
 
 #endif

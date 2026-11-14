@@ -42,6 +42,7 @@ int parse_expression();
 int parse_block();
 int parse_if();
 int parse_while();
+int parse_for();
 
 // Načtení všech tokenů ze scanneru do dynamického pole
 int load_all_tokens() {
@@ -549,21 +550,17 @@ int parse_function_call() {
 
     // Parsování argumentů 
     while (current_token.type != TOK_RPAREN) {
-        if (current_token.type != TOK_IDENT && current_token.type != TOK_INT_LIT && current_token.type != TOK_DOUBLE_LIT && current_token.type != TOK_STRING_LIT) {
-            if (current_token.type == TOK_EOL) { 
-                get_next_token(); 
-                continue; 
-            }
-            return ERR_SYNTAX;
+        if (current_token.type == TOK_EOL) { 
+            get_next_token(); 
+            continue; 
         }
 
         tTypeInfo arg_type;
-        // >> Ověření existence a zjištění typu argumentu
-        int term_err = sem_resolve_term(&sem_context, current_local_table, current_token, &arg_type);
-        if (term_err != ERR_OK) {
-            return term_err;
+        // FUNEXP: argumentem libovolný výraz
+        int expr_err = parse_expression_psa(&sem_context, current_local_table, &arg_type);
+        if (expr_err != ERR_OK) {
+            return expr_err;
         }
-
         if (arg_count >= 64) {
             return ERR_INTERNAL; 
         }
@@ -686,6 +683,11 @@ int parse_statement() {
         return parse_while();
     }
 
+    // For
+    if (current_token.type == TOK_KW_FOR) {
+        return parse_for();
+    }
+
     // Přiřazení do proměnné nebo volání funkce
     if (current_token.type == TOK_IDENT) {
         char* var_name = current_token.value.str_val; 
@@ -794,17 +796,22 @@ int parse_if() {
         return err;
     }
 
-    // Else
-    if (current_token.type != TOK_KW_ELSE) {
+    if (current_token.type != TOK_KW_ELSE) { 
         return ERR_SYNTAX;
     }
-    get_next_token(); 
-    
-    // Tělo else
-    err = parse_block();
-    if (err != ERR_OK) {
-        return err;
+    get_next_token();
+
+         
+    if (current_token.type == TOK_KW_IF) {
+        return parse_if();
+    } 
+    else {
+        err = parse_block();
+        if (err != ERR_OK) {
+            return err;
+        }
     }
+    // TODO: Sem kontrola kompatibility then větve a else větve
 
     return ERR_OK;
 }
@@ -830,6 +837,76 @@ int parse_while() {
     get_next_token();
 
     // Tělo while
+    err = parse_block();
+    if (err != ERR_OK) {
+        return err;
+    }
+
+    return ERR_OK;
+}
+
+// For (CONTROL)
+int parse_for() {
+    get_next_token(); 
+
+    // Identifikátor
+    if (current_token.type != TOK_IDENT) {
+        return ERR_SYNTAX;
+    }
+    char* var_name = current_token.value.str_val;
+    get_next_token();
+
+    // Šipka 
+    if (current_token.type != TOK_ARROW_L) { // (případně zkontroluj, jak se token šipky jmenuje, např. TOK_LARROW / TOK_ASSIGN_LEFT)
+        return ERR_SYNTAX;
+    }
+    get_next_token();
+
+    int err = parse_expression();
+    if (err != ERR_OK) return err;
+    // TODO: sem kontrola, že je typu Int
+
+    // To/Until
+    bool is_until = false;
+    if (current_token.type == TOK_KW_TO) {
+        get_next_token();
+    } else if (current_token.type == TOK_KW_UNTIL) {
+        is_until = true;
+        get_next_token();
+    } else {
+        return ERR_SYNTAX;
+    }
+
+    err = parse_expression();
+    if (err != ERR_OK) return err;
+
+    // By
+    bool has_step_by = false;
+    if (current_token.type == TOK_KW_BY) {
+        has_step_by = true;
+        get_next_token();
+        err = parse_expression(); 
+        if (err != ERR_OK) return err;
+    }
+
+    // Stráže (guards)
+    while (current_token.type == TOK_KW_IF) {
+        get_next_token();
+        err = parse_expression(); 
+        if (err != ERR_OK) return err;
+
+        if (current_token.type == TOK_EOL) {
+            get_next_token();
+        }
+    }
+
+    // Do
+    if (current_token.type != TOK_KW_DO) {
+        return ERR_SYNTAX;
+    }
+    get_next_token();
+
+    // Tělo cyklu for
     err = parse_block();
     if (err != ERR_OK) {
         return err;

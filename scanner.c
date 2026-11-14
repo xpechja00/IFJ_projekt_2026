@@ -9,7 +9,9 @@
 #include "scanner.h"
 #include "error.h"
 
+#include <errno.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -218,7 +220,7 @@ static tToken make_token(tTokenType type, int tok_line)
     memset(&t, 0, sizeof(t));
     t.type = type;
     t.line = tok_line;
-    if (type == TOK_EOL || type == TOK_INDENT || type == TOK_DEDENT) {
+    if (type == TOK_EOL || type == TOK_INDENT || type == TOK_DEDENT || type == TOK_EOF) {
         t.nl_before = true;
         return t;
     }
@@ -226,6 +228,18 @@ static tToken make_token(tTokenType type, int tok_line)
     nl_pending = false;
     line_has_token = true;
     return t;
+}
+
+// Vytvoří celočíselný literál z bufferu a zkontroluje rozsah
+static tToken make_int_token(int tok_line)
+{
+    errno = 0;
+    long long v = strtoll(buf, NULL, 10);
+    if (errno == ERANGE || v > INT32_MAX)
+        lex_error(tok_line, "celé číslo mimo rozsah");
+    tToken token = make_token(TOK_INT_LIT, tok_line);
+    token.value.int_val = (int32_t)v;
+    return token;
 }
 
 // Porovná pending_indent se zásobníkem, INDENT/DEDENTy dá do fronty.
@@ -288,6 +302,7 @@ tToken scanner_next(void)
 {
     scanner_init();
 
+restart:
     // nejdřív vydat čekající tokeny
     if (q_count > 0)
         return queue_pop();
@@ -302,13 +317,11 @@ tToken scanner_next(void)
                 saw_tab = true;
             pending_indent++;
         }
-        if(saw_tab){
-            if(c != EOF && c != '\n'){
-                lex_error(line, "tab na neprázdném řádku");
-            }
+        if (saw_tab && c != EOF && c != '\n' && c != '\r') {
+            lex_error(line, "tab na neprázdném řádku");
         }
         unget_char(c); // první znak, který není mezera, patří dalšímu kroku
-        if (paren_depth > 0 && c != '\n' && c != EOF && pending_indent <= indent_stack[indent_top])
+        if (paren_depth > 0 && c != '\n' && c != '\r' && c != EOF && pending_indent <= indent_stack[indent_top])
             error_exit(ERR_SYNTAX, "řádek %d: řádek v závorkách musí být více odsazen", line);
     }
 
@@ -334,7 +347,7 @@ tToken scanner_next(void)
                     line_has_token = false;
                     return make_token(TOK_EOL, line - 1);
                 }
-                return scanner_next(); // závorky nebo prázdný řádek
+                goto restart; // závorky nebo prázdný řádek (bez rekurze)
             }
             if (c == EOF) {
                 if (line_has_token) { // soubor nekončí '\n' -> nejdřív EOL
@@ -556,8 +569,11 @@ tToken scanner_next(void)
                     state = S_START;
                     if (comment_had_nl) {
                         nl_pending = true;
+                    }
+                    // uvnitř závorek se konce řádků ignorují
+                    if (comment_had_nl && paren_depth == 0) {
                         expect_eol = true;
-                        if (paren_depth == 0 && line_has_token) {
+                        if (line_has_token) {
                             line_has_token = false;
                             return make_token(TOK_EOL, line);
                         }
@@ -605,8 +621,7 @@ tToken scanner_next(void)
                 // zustat v S_NUM+INT
             } else {
                 unget_char(c);
-                tToken token = make_token(TOK_INT_LIT, tok_line);
-                token.value.int_val = (int32_t)strtol(buf, NULL, 10);
+                tToken token = make_int_token(tok_line);
                 return token;
             }
             buf_add(c);
@@ -623,14 +638,15 @@ tToken scanner_next(void)
             break;
 
         case S_NUM_ZERO:
-            if (c == '.') {
+            if (is_digit(c) || c == '_') {
+                lex_error(tok_line, "nenulový celočíselný literál nesmí začínat nulou");
+            } else if (c == '.') {
                 state = S_NUM_INT_DOT;
             } else if (c == 'e' || c == 'E') {
                 state = S_NUM_EXP_START;
             } else {
                 unget_char(c);
-                tToken token = make_token(TOK_INT_LIT, tok_line);
-                token.value.int_val = (int32_t)strtol(buf, NULL, 10);
+                tToken token = make_int_token(tok_line);
                 return token;
             }
             buf_add(c);
@@ -641,8 +657,7 @@ tToken scanner_next(void)
                 state = S_NUM_FRAC;
             } else {
                 unget_char(c);
-                tToken token = make_token(TOK_INT_LIT, tok_line);
-                token.value.int_val = (int32_t)strtol(buf, NULL, 10);
+                tToken token = make_int_token(tok_line);
                 queue_push(make_token(TOK_DOT, tok_line));
                 return token;
             }

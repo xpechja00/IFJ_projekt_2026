@@ -2,7 +2,7 @@
  * Projekt: Implementace překladače imperativního jazyka IFJ26
  * Modul:   semantic.c - implementace sémantické kontroly
  *
- * Autor:   xchwalo00
+ * Autor:   xchwalo00, xpechja00
  */
 
 #include "semantic.h"
@@ -18,10 +18,27 @@ static tTypeInfo make_type(tDataType t)
     return info;
 }
 
+// základní (neseznamový) typ hodnoty
+static bool is_basic_type(tDataType t)
+{
+    return (t == TYPE_INT || t == TYPE_DOUBLE || t == TYPE_STRING || t == TYPE_UNIT || t == TYPE_BOOLEAN);
+}
+
 // pomocná funkce pro ověření typu proměnné nebo funkce
+// List[T] má typ prvku v innerType; innerType == TYPE_LIST značí prázdný seznam List()
+// bez známého typu prvku (vnořené seznamy nejsou podporovány)
 static bool is_valid_value_type(tTypeInfo t)
 {
-    return (t.type == TYPE_INT || t.type == TYPE_DOUBLE || t.type == TYPE_STRING || t.type == TYPE_UNIT);
+    if (t.type == TYPE_LIST) {
+        return is_basic_type(t.innerType) || t.innerType == TYPE_LIST;
+    }
+    return is_basic_type(t.type);
+}
+
+// je typ prázdný seznam List() bez známého typu prvku?
+bool sem_is_untyped_list(tTypeInfo t)
+{
+    return t.type == TYPE_LIST && t.innerType == TYPE_LIST;
 }
 
 // ověření kompatibility datových typů včetně konverze
@@ -29,6 +46,13 @@ bool sem_types_compatible(tTypeInfo expected, tTypeInfo actual)
 {
     if ((is_valid_value_type(expected) == false) || (is_valid_value_type(actual) == false)) {
         return false;
+    }
+    // seznamy: shodný typ prvku, prázdný seznam List() lze použít jako libovolný List[T]
+    if (expected.type == TYPE_LIST || actual.type == TYPE_LIST) {
+        if (expected.type != actual.type) {
+            return false;
+        }
+        return sem_is_untyped_list(actual) || expected.innerType == actual.innerType;
     }
     if (expected.type == actual.type) {
         return true;
@@ -94,6 +118,7 @@ int sem_init(tSemContext* context, tSymTable* global_table)
     if ((err = insert_builtin(global_table, "subStr", TYPE_STRING, 3, TYPE_STRING, TYPE_INT, TYPE_INT)) != ERR_OK) return err;
     if ((err = insert_builtin(global_table, "ord", TYPE_INT, 2, TYPE_STRING, TYPE_INT, TYPE_UNIT)) != ERR_OK) return err;
     if ((err = insert_builtin(global_table, "chr", TYPE_STRING, 1, TYPE_INT, TYPE_UNIT, TYPE_UNIT)) != ERR_OK) return err;
+    if ((err = insert_builtin(global_table, "readBoolean", TYPE_BOOLEAN, 0, TYPE_UNIT, TYPE_UNIT, TYPE_UNIT)) != ERR_OK) return err;
 
     return ERR_OK;
 }
@@ -167,13 +192,36 @@ int sem_check_main_func(int main_function_count)
 }
 
 // kontrola hlavičky funkcí a uložení do globální tabulky symbolů
+// předběžná deklarace funkce z prvního průchodu (tělo ještě nezpracováno)
+int sem_declare_function(tSymTable* global_table, const char* name, tTypeInfo return_type, tTypeInfo* params, int param_count)
+{
+    if (global_table == NULL || name == NULL || param_count < 0) {
+        return ERR_INTERNAL;
+    }
+
+    tData d;
+    d.kind = SYM_FUNC;
+    d.attribute.func.returnType = return_type;
+    d.attribute.func.paramCount = param_count;
+    d.attribute.func.params = (param_count > 0) ? params : NULL; // tabulka si dělá kopii
+    d.attribute.func.isDefined = false;
+
+    tInsertResult res = symtable_insert(global_table, name, d);
+    if (res == INSERT_DUPLICATE) {
+        return ERR_REDEF;
+    } else if (res == INSERT_ERROR) {
+        return ERR_INTERNAL;
+    }
+    return ERR_OK;
+}
+
 int sem_register_function(tSymTable* global_table, const char* name, tTypeInfo return_type, tTypeInfo* params, int param_count, bool is_main)
 {
     if (global_table == NULL || name == NULL) {
         return ERR_INTERNAL;
     }
 
-    // kontrola redefinice funkce
+    // kontrola redefinice funkce (předběžná deklarace z prvního průchodu je v pořádku)
     tData* existing = symtable_search(global_table, name);
     if (existing != NULL) {
         if ((existing->kind != SYM_FUNC) || (existing->attribute.func.isDefined == true)) {
@@ -199,6 +247,24 @@ int sem_register_function(tSymTable* global_table, const char* name, tTypeInfo r
         if ((params == NULL) || (is_valid_value_type(params[a]) == false)) {
             return ERR_TYPE;
         }
+    }
+
+    // dodefinování předběžné deklarace
+    if (existing != NULL) {
+        tTypeInfo* copy = NULL;
+        if (param_count > 0) {
+            copy = malloc(sizeof(tTypeInfo) * param_count);
+            if (copy == NULL) {
+                return ERR_INTERNAL;
+            }
+            memcpy(copy, params, sizeof(tTypeInfo) * param_count);
+        }
+        free(existing->attribute.func.params);
+        existing->attribute.func.params = copy;
+        existing->attribute.func.paramCount = param_count;
+        existing->attribute.func.returnType = return_type;
+        existing->attribute.func.isDefined = true;
+        return ERR_OK;
     }
 
     // uložení dat o funkci do globální tabulky symbolů
@@ -300,7 +366,10 @@ int sem_define_var(tSemContext* context, tSymTable* local_table, const char* nam
         }
         final_type = explicit_type;
     } else {
-        // odvození typu z inicializace
+        // odvození typu z inicializace; prázdný seznam vyžaduje očekávaný typ
+        if (sem_is_untyped_list(init_type)) {
+            return ERR_TYPE;
+        }
         final_type = init_type;
     }
 
@@ -455,7 +524,10 @@ int sem_check_func_body_result(tSemContext* context, tTypeInfo body_type)
             return ERR_TYPE;
         }
     } else {
-        // odvození typu z výsledku těla
+        // odvození typu z výsledku těla; prázdný seznam vyžaduje očekávaný typ
+        if (sem_is_untyped_list(body_type)) {
+            return ERR_TYPE;
+        }
         context->expected_return_type = body_type;
     }
 
@@ -490,6 +562,11 @@ int sem_resolve_term(tSemContext* context, tSymTable* local_table, tToken token,
 
     case TOK_STRING_LIT:
         *out_type = make_type(TYPE_STRING);
+        return ERR_OK;
+
+    case TOK_TRUE_LIT:
+    case TOK_FALSE_LIT:
+        *out_type = make_type(TYPE_BOOLEAN);
         return ERR_OK;
 
     case TOK_IDENT: {
@@ -530,12 +607,22 @@ int sem_check_unary_op(tTokenType op, tTypeInfo operand, tTypeInfo* out_type)
         return ERR_TYPE;
     }
 
+    // logická negace jen na Boolean
+    if (op == TOK_NOT) {
+        if (operand.type == TYPE_BOOLEAN) {
+            *out_type = operand;
+            return ERR_OK;
+        }
+        return ERR_TYPE;
+    }
+
     return ERR_TYPE;
 }
 
 // kontrola binárních operátorů
-int sem_check_binary_op(tTokenType op, tTypeInfo left, tTypeInfo right, tTypeInfo* out_type)
+int sem_check_binary_op(tSemContext* ctx, tTokenType op, tTypeInfo left, tTypeInfo right, tTypeInfo* out_type)
 {
+    (void)ctx;
     if (out_type == NULL) {
         return ERR_INTERNAL;
     }
@@ -578,8 +665,37 @@ int sem_check_binary_op(tTokenType op, tTypeInfo left, tTypeInfo right, tTypeInf
         }
         return ERR_TYPE;
 
+    case TOK_AND:
+    case TOK_OR:
+        if (left.type == TYPE_BOOLEAN && right.type == TYPE_BOOLEAN) {
+            *out_type = make_type(TYPE_BOOLEAN);
+            return ERR_OK;
+        }
+        return ERR_TYPE;
+
+    case TOK_CONCAT:
+        // ++ spojí dva seznamy se shodným typem prvku
+        if (left.type == TYPE_LIST && right.type == TYPE_LIST) {
+            if (sem_types_compatible(left, right)) {
+                *out_type = left;
+                return ERR_OK;
+            }
+            if (sem_types_compatible(right, left)) {
+                *out_type = right;
+                return ERR_OK;
+            }
+        }
+        return ERR_TYPE;
+
     case TOK_EQ:
     case TOK_NEQ:
+        if (left.type == TYPE_LIST || right.type == TYPE_LIST) {
+            if (sem_types_compatible(left, right) || sem_types_compatible(right, left)) {
+                *out_type = make_type(TYPE_BOOLEAN);
+                return ERR_OK;
+            }
+            return ERR_TYPE;
+        }
         if ((left_num == true && right_num == true) || (left.type == right.type)) {
             *out_type = make_type(TYPE_BOOLEAN);
             return ERR_OK;
@@ -589,4 +705,85 @@ int sem_check_binary_op(tTokenType op, tTypeInfo left, tTypeInfo right, tTypeInf
     default:
         return ERR_TYPE;
     }
+}
+
+// zkontroluje člen hodnoty (výraz.id) a určí typ výsledku
+int sem_check_member(tTypeInfo receiver, const char* member, tTypeInfo* out_type)
+{
+    if (member == NULL || out_type == NULL) {
+        return ERR_INTERNAL;
+    }
+
+    // toString: libovolná hodnota -> String
+    if (strcmp(member, "toString") == 0) {
+        *out_type = make_type(TYPE_STRING);
+        return ERR_OK;
+    }
+    // toInt: Double -> Int
+    if (strcmp(member, "toInt") == 0) {
+        if (receiver.type != TYPE_DOUBLE) {
+            return ERR_TYPE;
+        }
+        *out_type = make_type(TYPE_INT);
+        return ERR_OK;
+    }
+    // floor: Double -> Double
+    if (strcmp(member, "floor") == 0) {
+        if (receiver.type != TYPE_DOUBLE) {
+            return ERR_TYPE;
+        }
+        *out_type = make_type(TYPE_DOUBLE);
+        return ERR_OK;
+    }
+    // length: String -> Int
+    if (strcmp(member, "length") == 0) {
+        if (receiver.type != TYPE_STRING) {
+            return ERR_TYPE;
+        }
+        *out_type = make_type(TYPE_INT);
+        return ERR_OK;
+    }
+
+    // jiný člen není definován
+    return ERR_UNDEF;
+}
+
+// kontrola členu seznamu (LISTS); v arg_count vrátí počet argumentů typu Int,
+// které člen očekává v závorkách (0 = zapisuje se bez závorek)
+int sem_check_list_member(tTypeInfo receiver, const char* member, int* arg_count, tTypeInfo* out_type)
+{
+    if (member == NULL || arg_count == NULL || out_type == NULL || receiver.type != TYPE_LIST) {
+        return ERR_INTERNAL;
+    }
+
+    *arg_count = 0;
+    if (strcmp(member, "toString") == 0) {
+        *out_type = make_type(TYPE_STRING);
+        return ERR_OK;
+    }
+    if (strcmp(member, "head") == 0) {
+        // typ prvku prázdného seznamu List() není znám
+        if (sem_is_untyped_list(receiver)) {
+            return ERR_TYPE;
+        }
+        *out_type = make_type(receiver.innerType);
+        return ERR_OK;
+    }
+    if (strcmp(member, "tail") == 0) {
+        *out_type = receiver;
+        return ERR_OK;
+    }
+    if (strcmp(member, "drop") == 0 || strcmp(member, "take") == 0) {
+        *arg_count = 1;
+        *out_type = receiver;
+        return ERR_OK;
+    }
+    if (strcmp(member, "slice") == 0) {
+        *arg_count = 2;
+        *out_type = receiver;
+        return ERR_OK;
+    }
+
+    // jiný člen seznamu není definován
+    return ERR_UNDEF;
 }

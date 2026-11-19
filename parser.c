@@ -6,13 +6,13 @@
  *
  */
 #include "parser.h"
-#include "scanner.h"
 #include "error.h"
-#include "symtable.h"
 #include "expression.h"
+#include "scanner.h"
 #include "semantic.h"
+#include "symtable.h"
+#include <stdlib.h>
 #include <string.h>
-#include <stdlib.h> 
 
 tToken current_token;
 
@@ -34,26 +34,33 @@ static const tTypeInfo UNIT_TYPE = { TYPE_UNIT, TYPE_UNIT };
 static int main_function_count = 0;
 
 // Druh posledního dokončeného příkazu (pro pravidlo o if na konci těla funkce)
-typedef enum { STMT_OTHER, STMT_RETURN, STMT_IF } tStmtKind;
+typedef enum { STMT_OTHER,
+    STMT_RETURN,
+    STMT_IF } tStmtKind;
 static tStmtKind last_stmt_kind = STMT_OTHER;
 // Vlastnosti posledního zpracovaného if: všechny větve končí return / všechny větve mají výsledek Unit
 static bool last_if_all_return = false;
 static bool last_if_all_unit = false;
 
 // Uživatelské funkce z prvního průchodu: pozice v poli tokenů a stav odvození návratového typu
-typedef enum { FN_UNRESOLVED, FN_IN_PROGRESS, FN_RESOLVED } tFuncState;
+typedef enum { FN_UNRESOLVED,
+    FN_IN_PROGRESS,
+    FN_RESOLVED } tFuncState;
 typedef struct {
-    char* name;          // ukazuje do tokenu, platí do free_all_tokens
-    int def_index;       // index tokenu 'def' v all_tokens
-    bool explicit_ret;   // návratový typ uveden v hlavičce
-    tFuncState state;    // stav odvození typu (jen pro funkce bez explicitního typu)
+    char* name; // ukazuje do tokenu, platí do free_all_tokens
+    int def_index; // index tokenu 'def' v all_tokens
+    bool explicit_ret; // návratový typ uveden v hlavičce
+    tFuncState state; // stav odvození typu (jen pro funkce bez explicitního typu)
 } tFuncInfo;
 static tFuncInfo* funcs = NULL;
 static int func_count = 0;
 static int func_capacity = 0;
 
 // Graf volání (hrana caller -> callee) pro kontrolu rekurze
-typedef struct { int from; int to; } tCallEdge;
+typedef struct {
+    int from;
+    int to;
+} tCallEdge;
 static tCallEdge* call_edges = NULL;
 static int call_count = 0;
 static int call_capacity = 0;
@@ -65,7 +72,8 @@ static int current_func = -1;
 static int check_only_depth = 0;
 
 // Vyhledání uživatelské funkce podle jména; -1, pokud neexistuje
-static int find_func(const char* name) {
+static int find_func(const char* name)
+{
     for (int i = 0; i < func_count; i++) {
         if (strcmp(funcs[i].name, name) == 0) {
             return i;
@@ -75,7 +83,8 @@ static int find_func(const char* name) {
 }
 
 // Přidání funkce z prvního průchodu
-static int add_func(char* name, int def_index, bool explicit_ret) {
+static int add_func(char* name, int def_index, bool explicit_ret)
+{
     if (func_count >= func_capacity) {
         int new_capacity = (func_capacity == 0) ? 16 : func_capacity * 2;
         tFuncInfo* tmp = realloc(funcs, new_capacity * sizeof(tFuncInfo));
@@ -94,7 +103,8 @@ static int add_func(char* name, int def_index, bool explicit_ret) {
 }
 
 // Přidání hrany do grafu volání
-static int add_call_edge(int from, int to) {
+static int add_call_edge(int from, int to)
+{
     if (call_count >= call_capacity) {
         int new_capacity = (call_capacity == 0) ? 32 : call_capacity * 2;
         tCallEdge* tmp = realloc(call_edges, new_capacity * sizeof(tCallEdge));
@@ -111,7 +121,8 @@ static int add_call_edge(int from, int to) {
 }
 
 // Uvolnění informací o funkcích a grafu volání
-static void free_func_info(void) {
+static void free_func_info(void)
+{
     free(funcs);
     funcs = NULL;
     func_count = func_capacity = 0;
@@ -124,7 +135,8 @@ static void free_func_info(void) {
 
 // Kontrola rekurze: funkce bez explicitního návratového typu nesmí ležet na cyklu
 // v grafu volání (spec 2.3, přímá i nepřímá rekurze) -> chyba 6
-static int check_recursion(void) {
+static int check_recursion(void)
+{
     if (func_count == 0) {
         return ERR_OK;
     }
@@ -183,20 +195,33 @@ int parse_while(void);
 int parse_for(void);
 
 // Převod tokenu základního typu na datový typ; false, pokud token není typ
-static bool token_to_type(tTokenType tok, tDataType* out) {
+static bool token_to_type(tTokenType tok, tDataType* out)
+{
     switch (tok) {
-        case TOK_KW_INT:     *out = TYPE_INT;     return true;
-        case TOK_KW_DOUBLE:  *out = TYPE_DOUBLE;  return true;
-        case TOK_KW_STRING:  *out = TYPE_STRING;  return true;
-        case TOK_KW_UNIT:    *out = TYPE_UNIT;    return true;
-        case TOK_KW_BOOLEAN: *out = TYPE_BOOLEAN; return true;
-        default:             return false;
+    case TOK_KW_INT:
+        *out = TYPE_INT;
+        return true;
+    case TOK_KW_DOUBLE:
+        *out = TYPE_DOUBLE;
+        return true;
+    case TOK_KW_STRING:
+        *out = TYPE_STRING;
+        return true;
+    case TOK_KW_UNIT:
+        *out = TYPE_UNIT;
+        return true;
+    case TOK_KW_BOOLEAN:
+        *out = TYPE_BOOLEAN;
+        return true;
+    default:
+        return false;
     }
 }
 
 // Typ začínající tokenem na indexu idx: základní typ nebo List[T] (LISTS).
 // Vrátí počet tokenů typu, 0 pokud na indexu typ není (vnořené seznamy nejsou podporovány).
-static int type_at(int idx, tTypeInfo* out) {
+static int type_at(int idx, tTypeInfo* out)
+{
     if (idx < 0 || idx >= token_count) {
         return 0;
     }
@@ -205,9 +230,7 @@ static int type_at(int idx, tTypeInfo* out) {
         return 1;
     }
     // List [ T ]
-    if (all_tokens[idx].type == TOK_KW_LIST && idx + 3 < token_count &&
-        all_tokens[idx + 1].type == TOK_LBRACKET && all_tokens[idx + 3].type == TOK_RBRACKET &&
-        token_to_type(all_tokens[idx + 2].type, &out->innerType)) {
+    if (all_tokens[idx].type == TOK_KW_LIST && idx + 3 < token_count && all_tokens[idx + 1].type == TOK_LBRACKET && all_tokens[idx + 3].type == TOK_RBRACKET && token_to_type(all_tokens[idx + 2].type, &out->innerType)) {
         out->type = TYPE_LIST;
         return 4;
     }
@@ -215,7 +238,8 @@ static int type_at(int idx, tTypeInfo* out) {
 }
 
 // Typ začínající aktuálním tokenem; po úspěchu je current_token posledním tokenem typu
-static bool parse_type(tTypeInfo* out) {
+static bool parse_type(tTypeInfo* out)
+{
     int len = type_at(current_token_index - 1, out);
     if (len == 0) {
         return false;
@@ -227,7 +251,8 @@ static bool parse_type(tTypeInfo* out) {
 }
 
 // Uvolnění všech načtených tokenů
-static void free_all_tokens(void) {
+static void free_all_tokens(void)
+{
     if (all_tokens != NULL) {
         for (int i = 0; i < token_count; i++) {
             token_free(&all_tokens[i]);
@@ -239,7 +264,8 @@ static void free_all_tokens(void) {
 }
 
 // Načtení všech tokenů ze scanneru do dynamického pole
-int load_all_tokens(void) {
+int load_all_tokens(void)
+{
     int capacity = 128;
     all_tokens = malloc(capacity * sizeof(tToken));
     if (!all_tokens) {
@@ -270,7 +296,8 @@ int load_all_tokens(void) {
 }
 
 // Načtení dalšího tokenu
-void get_next_token(void) {
+void get_next_token(void)
+{
     prev_token_type = current_token.type;
     if (current_token_index < token_count) {
         current_token = all_tokens[current_token_index++];
@@ -280,20 +307,22 @@ void get_next_token(void) {
 }
 
 // Naleznutí dalšího tokenu bez spotřebování současného
-tToken parser_peek_token(void) {
+tToken parser_peek_token(void)
+{
     if (current_token_index < token_count) {
         return all_tokens[current_token_index];
     }
-    tToken eof = {0};
+    tToken eof = { 0 };
     eof.type = TOK_EOF;
     return eof;
 }
 
 // Funkce pro první průchod a registraci hlaviček funkcí (včetně parametrů)
-int parse_first_pass(tSymTable* global_symtable) {
+int parse_first_pass(tSymTable* global_symtable)
+{
     int i = 0;
     bool is_main = false;
-    #define TOK(k) (all_tokens[(k)].type)
+#define TOK(k) (all_tokens[(k)].type)
 
     while (i < token_count && TOK(i) != TOK_EOF) {
         if (TOK(i) == TOK_ANNOT_MAIN) {
@@ -393,12 +422,13 @@ int parse_first_pass(tSymTable* global_symtable) {
         }
         is_main = false;
     }
-    #undef TOK
+#undef TOK
     return ERR_OK;
 }
 
 // Úklid po parsování
-static int parse_finish(int err) {
+static int parse_finish(int err)
+{
     sem_cleanup(&sem_context);
     free_func_info();
     free_all_tokens();
@@ -406,13 +436,14 @@ static int parse_finish(int err) {
 }
 
 // Hlavní funkce
-int parse(tSymTable* global_symtable){
+int parse(tSymTable* global_symtable)
+{
     main_function_count = 0;
     free_func_info();
 
     // Načtení všech tokenů do paměti
     int err = load_all_tokens();
-    if (err != ERR_OK){
+    if (err != ERR_OK) {
         return err;
     }
 
@@ -427,7 +458,7 @@ int parse(tSymTable* global_symtable){
 
     // Prolog
     err = parse_prolog();
-    if (err != ERR_OK){
+    if (err != ERR_OK) {
         return parse_finish(err);
     }
 
@@ -438,7 +469,7 @@ int parse(tSymTable* global_symtable){
     }
 
     // Druhý průchod (prolog už je zkontrolovaný, current_token stojí za ním)
-    while (current_token.type != TOK_EOF){
+    while (current_token.type != TOK_EOF) {
         if (current_token.type == TOK_EOL) {
             get_next_token();
             continue;
@@ -473,10 +504,11 @@ int parse(tSymTable* global_symtable){
 }
 
 // Prolog: import ifj26.*
-int parse_prolog(void){
+int parse_prolog(void)
+{
     // import
     if (current_token.type != TOK_KW_IMPORT) {
-        return ERR_SYNTAX; 
+        return ERR_SYNTAX;
     }
     get_next_token();
 
@@ -508,7 +540,8 @@ int parse_prolog(void){
 }
 
 // Funkce def Nazev(id:param, id:param..)
-int parse_function(tSymTable* global_symtable, bool is_main){
+int parse_function(tSymTable* global_symtable, bool is_main)
+{
     // Def
     if (current_token.type != TOK_KW_DEF) {
         return ERR_SYNTAX;
@@ -527,14 +560,13 @@ int parse_function(tSymTable* global_symtable, bool is_main){
     }
     get_next_token();
 
-
     // Parametry
     // (
-    if (current_token.type != TOK_LPAREN){
+    if (current_token.type != TOK_LPAREN) {
         return ERR_SYNTAX;
     }
     get_next_token();
-    
+
     // Dynamické pole pro parametry
     int param_capacity = 4;
     int param_count = 0;
@@ -547,7 +579,7 @@ int parse_function(tSymTable* global_symtable, bool is_main){
     }
 
     // param)
-    while (current_token.type != TOK_RPAREN){
+    while (current_token.type != TOK_RPAREN) {
         if (current_token.type == TOK_EOL) {
             get_next_token();
             continue;
@@ -563,7 +595,7 @@ int parse_function(tSymTable* global_symtable, bool is_main){
         get_next_token();
 
         //:
-        if (current_token.type != TOK_COLON) { 
+        if (current_token.type != TOK_COLON) {
             free(params_arr);
             free(param_names);
             return ERR_SYNTAX;
@@ -578,10 +610,10 @@ int parse_function(tSymTable* global_symtable, bool is_main){
             return ERR_SYNTAX;
         }
         get_next_token();
-        
+
         if (param_count >= param_capacity) {
             param_capacity *= 2;
-            
+
             tTypeInfo* params_arr_pointer = realloc(params_arr, param_capacity * sizeof(tTypeInfo));
             if (!params_arr_pointer) {
                 free(params_arr);
@@ -605,26 +637,25 @@ int parse_function(tSymTable* global_symtable, bool is_main){
 
         //,
         if (current_token.type == TOK_COMMA) {
-            get_next_token(); 
+            get_next_token();
             // Koncová čárka je povolena jen tehdy, když ')' je na dalším řádku
             if (current_token.type == TOK_RPAREN && !current_token.nl_before) {
                 free(params_arr);
                 free(param_names);
                 return ERR_SYNTAX;
             }
-        } 
+        }
 
         //)
         else if (current_token.type == TOK_RPAREN) {
-            break; 
+            break;
         }
 
-        else{
+        else {
             free(params_arr);
             free(param_names);
             return ERR_SYNTAX;
         }
-        
     }
     get_next_token();
 
@@ -633,7 +664,7 @@ int parse_function(tSymTable* global_symtable, bool is_main){
     bool has_explicit_ret = false;
     if (current_token.type == TOK_COLON) {
         has_explicit_ret = true;
-        get_next_token(); 
+        get_next_token();
 
         // Datový typ
         if (!parse_type(&ret_type_info)) {
@@ -641,7 +672,7 @@ int parse_function(tSymTable* global_symtable, bool is_main){
             free(param_names);
             return ERR_SYNTAX;
         }
-        get_next_token(); 
+        get_next_token();
     }
     tDataType ret_type = ret_type_info.type;
 
@@ -678,18 +709,18 @@ int parse_function(tSymTable* global_symtable, bool is_main){
     }
 
     //=
-    if (current_token.type != TOK_ASSIGN) { 
+    if (current_token.type != TOK_ASSIGN) {
         // >> Opouštění funkce a úklid lokálního rozsahu platnosti
         sem_leave_function(&sem_context);
         current_local_table = NULL;
         return ERR_SYNTAX;
     }
     get_next_token();
-    
+
     // Tělo funkce
     int body_err = 0;
     if (current_token.type == TOK_EOL) {
-        get_next_token(); 
+        get_next_token();
         body_err = parse_statement_block();
         if (body_err == ERR_OK && last_stmt_kind == STMT_IF) {
             // Tělo končí příkazem if (spec 2.3, pravidlo 3)
@@ -704,9 +735,8 @@ int parse_function(tSymTable* global_symtable, bool is_main){
         } else if (body_err == ERR_OK) {
             body_err = sem_check_func_body_result(&sem_context, last_expr_type);
         }
-    } 
-    else {
-        // Jednořádkové tělo 
+    } else {
+        // Jednořádkové tělo
         body_err = parse_expression_or_call();
         if (body_err == ERR_OK) {
             // >> Kontrola návratového typu jednořádkového těla funkce
@@ -732,16 +762,18 @@ int parse_function(tSymTable* global_symtable, bool is_main){
     sem_leave_function(&sem_context);
     current_local_table = NULL;
 
-    return body_err; 
+    return body_err;
 }
 
-int parse_expression() {
+int parse_expression()
+{
     // >> Precedenční analýza výrazu se sémantickou kontrolou
     return parse_expression_psa(&sem_context, current_local_table, &last_expr_type);
 }
 
 // Zjištění zda se jedná o volání funkce či výraz
-int parse_expression_or_call() {
+int parse_expression_or_call()
+{
     if (current_token.type == TOK_KW_IF) {
         return parse_if(true);
     }
@@ -749,7 +781,8 @@ int parse_expression_or_call() {
 }
 
 // Var/Val
-int parse_var() {
+int parse_var()
+{
     bool is_mutable = (current_token.type == TOK_KW_VAR);
     get_next_token();
 
@@ -782,7 +815,7 @@ int parse_var() {
         return ERR_SYNTAX;
     }
     get_next_token();
-    
+
     int err = parse_expression_or_call();
     if (err != ERR_OK) {
         return err;
@@ -797,24 +830,26 @@ int parse_var() {
 }
 
 // Return
-int parse_return() {
-    get_next_token(); 
+int parse_return()
+{
+    get_next_token();
 
-    if (current_token.type == TOK_EOL || current_token.type == TOK_DEDENT ||
-        current_token.type == TOK_SEMICOLON || current_token.type == TOK_KW_ELSE) {
+    if (current_token.type == TOK_EOL || current_token.type == TOK_DEDENT || current_token.type == TOK_SEMICOLON || current_token.type == TOK_KW_ELSE) {
         // >> Sémantická kontrola prázdného příkazu return
         last_expr_type = UNIT_TYPE;
         return sem_check_return(&sem_context, false, UNIT_TYPE);
     }
 
     int err = parse_expression_or_call();
-    if (err != ERR_OK) return err;
+    if (err != ERR_OK)
+        return err;
     // >> Sémantická kontrola návratového typu v příkazu return
     return sem_check_return(&sem_context, true, last_expr_type);
 }
 
 // Příkazy
-static int parse_statement_inner(void) {
+static int parse_statement_inner(void)
+{
     // Var nebo val
     if (current_token.type == TOK_KW_VAL || current_token.type == TOK_KW_VAR) {
         return parse_var();
@@ -825,12 +860,12 @@ static int parse_statement_inner(void) {
         return parse_return();
     }
 
-    // If 
+    // If
     if (current_token.type == TOK_KW_IF) {
         return parse_if(false);
     }
 
-    // While 
+    // While
     if (current_token.type == TOK_KW_WHILE) {
         return parse_while();
     }
@@ -842,16 +877,17 @@ static int parse_statement_inner(void) {
 
     // Přiřazení do proměnné nebo volání funkce
     if (current_token.type == TOK_IDENT) {
-        char* var_name = current_token.value.str_val; 
+        char* var_name = current_token.value.str_val;
         // Zjištění dalšího tokenu
-        tToken next = parser_peek_token(); 
-        
+        tToken next = parser_peek_token();
+
         if (next.type == TOK_ASSIGN) {
             // Posuny za identifikátor a =
-            get_next_token(); 
-            get_next_token(); 
+            get_next_token();
+            get_next_token();
             int err = parse_expression_or_call();
-            if (err != ERR_OK) return err;
+            if (err != ERR_OK)
+                return err;
             // >> Kontrola modifikovatelnosti a typové kompatibility při přiřazení
             err = sem_check_assignment(&sem_context, current_local_table, var_name, last_expr_type);
             last_expr_type = UNIT_TYPE; // přiřazení má typ Unit
@@ -864,7 +900,8 @@ static int parse_statement_inner(void) {
 }
 
 // Zpracuje jeden příkaz a zapamatuje si jeho druh
-int parse_statement(void) {
+int parse_statement(void)
+{
     tTokenType first = current_token.type;
     int err = parse_statement_inner();
     if (first == TOK_KW_RETURN) {
@@ -878,40 +915,39 @@ int parse_statement(void) {
 }
 
 // Funkce pro zpracování bloku příkazů
-int parse_statement_block() {
+int parse_statement_block()
+{
     if (current_token.type != TOK_INDENT) {
         return ERR_SYNTAX;
     }
-    get_next_token(); 
+    get_next_token();
 
     while (current_token.type != TOK_DEDENT && current_token.type != TOK_EOF) {
-        int err = parse_statement(); 
+        int err = parse_statement();
         if (err != ERR_OK) {
-            return err; 
+            return err;
         }
 
         if (current_token.type == TOK_SEMICOLON) {
             get_next_token();
-        }
-        else if (current_token.type == TOK_EOL) {
+        } else if (current_token.type == TOK_EOL) {
             get_next_token();
-        } 
-        else if (current_token.type != TOK_DEDENT &&
-                 prev_token_type != TOK_DEDENT && prev_token_type != TOK_EOL) {
-            return ERR_SYNTAX; 
+        } else if (current_token.type != TOK_DEDENT && prev_token_type != TOK_DEDENT && prev_token_type != TOK_EOL) {
+            return ERR_SYNTAX;
         }
     }
 
     if (current_token.type != TOK_DEDENT) {
         return ERR_SYNTAX;
     }
-    get_next_token(); 
+    get_next_token();
 
     return ERR_OK;
 }
 
 // Blok příkazů v if/while
-int parse_block() {
+int parse_block()
+{
     // >> Vytvoření nového vnořeného rozsahu platnosti (scope)
     int push_err = sem_scope_push(&sem_context);
     if (push_err != ERR_OK) {
@@ -921,7 +957,7 @@ int parse_block() {
 
     int err = ERR_OK;
     if (current_token.type == TOK_EOL) {
-        get_next_token(); 
+        get_next_token();
         err = parse_statement_block();
     } else {
         // Jednořádkový příkaz
@@ -938,7 +974,8 @@ int parse_block() {
 }
 
 // Zjistí, zda větev končí return a zda má výsledek Unit (podle posledního příkazu větve)
-static void branch_info(bool* ends_with_return, bool* is_unit) {
+static void branch_info(bool* ends_with_return, bool* is_unit)
+{
     if (last_stmt_kind == STMT_RETURN) {
         *ends_with_return = true;
         *is_unit = false;
@@ -952,7 +989,8 @@ static void branch_info(bool* ends_with_return, bool* is_unit) {
 }
 
 // Společný typ dvou větví (s rozšířením Int na Double); false, pokud neexistuje
-static bool common_type(tTypeInfo a, tTypeInfo b, tTypeInfo* out) {
+static bool common_type(tTypeInfo a, tTypeInfo b, tTypeInfo* out)
+{
     if (sem_types_compatible(a, b)) {
         *out = a;
         return true;
@@ -966,8 +1004,9 @@ static bool common_type(tTypeInfo a, tTypeInfo b, tTypeInfo* out) {
 
 // If jako příkaz (as_expr == false) nebo jako výraz (as_expr == true, CONTROL)
 // if podmínka then větev [else (větev | if ...)]
-int parse_if(bool as_expr) {
-    get_next_token(); 
+int parse_if(bool as_expr)
+{
+    get_next_token();
 
     // Podmínka
     int err = parse_expression();
@@ -1044,10 +1083,11 @@ int parse_if(bool as_expr) {
 }
 
 // While
-int parse_while() {
-    get_next_token(); 
+int parse_while()
+{
+    get_next_token();
 
-    // Podmínka 
+    // Podmínka
     int err = parse_expression();
     if (err != ERR_OK) {
         return err;
@@ -1074,13 +1114,14 @@ int parse_while() {
 }
 
 // Pomocná funkce: je aktuální token identifikátor s daným jménem? (to/until/by)
-static bool current_is_word(const char* word) {
-    return current_token.type == TOK_IDENT && current_token.value.str_val != NULL &&
-           strcmp(current_token.value.str_val, word) == 0;
+static bool current_is_word(const char* word)
+{
+    return current_token.type == TOK_IDENT && current_token.value.str_val != NULL && strcmp(current_token.value.str_val, word) == 0;
 }
 
 // Výraz, který musí být typu Int (meze a krok cyklu for)
-static int parse_int_expression(void) {
+static int parse_int_expression(void)
+{
     int err = parse_expression();
     if (err != ERR_OK) {
         return err;
@@ -1092,8 +1133,9 @@ static int parse_int_expression(void) {
 //   for id <- expr (to|until) expr [by expr] {if expr} do tělo
 //   for EOL INDENT generátor EOL {if expr EOL} DEDENT do tělo
 // "to", "until" a "by" jsou identifikátory, ne klíčová slova
-int parse_for(void) {
-    get_next_token(); 
+int parse_for(void)
+{
+    get_next_token();
 
     // Víceřádkový zápis: generátor a stráže jsou v odsazeném bloku
     bool multiline = false;
@@ -1121,7 +1163,8 @@ int parse_for(void) {
 
     // Zdroj generátoru: počáteční hodnota rozsahu, nebo seznam (LISTS)
     int err = parse_expression();
-    if (err != ERR_OK) return err;
+    if (err != ERR_OK)
+        return err;
     tTypeInfo var_type = { TYPE_INT, TYPE_UNIT };
     bool over_list = (last_expr_type.type == TYPE_LIST);
 
@@ -1144,7 +1187,8 @@ int parse_for(void) {
 
         // Koncová hodnota
         err = parse_int_expression();
-        if (err != ERR_OK) return err;
+        if (err != ERR_OK)
+            return err;
     }
 
     // Volitelný krok (jen u rozsahu)
@@ -1154,16 +1198,17 @@ int parse_for(void) {
         tToken step_token = current_token;
         int step_start = current_token_index;
         err = parse_int_expression();
-        if (err != ERR_OK) return err;
-        if (current_token_index - step_start == 1 && step_token.type == TOK_INT_LIT &&
-            step_token.value.int_val == 0) {
+        if (err != ERR_OK)
+            return err;
+        if (current_token_index - step_start == 1 && step_token.type == TOK_INT_LIT && step_token.value.int_val == 0) {
             return ERR_OTHER;
         }
     }
 
     // Řídicí proměnná platí ve strážích i v těle: vlastní rozsah platnosti
     err = sem_scope_push(&sem_context);
-    if (err != ERR_OK) return err;
+    if (err != ERR_OK)
+        return err;
     current_local_table = sem_context.scopes[sem_context.scope_top];
 
     err = sem_define_var(&sem_context, current_local_table, var_name, false, true, var_type, var_type);
@@ -1215,7 +1260,8 @@ int parse_for(void) {
 
 // Okamžitá analýza těla funkce bez explicitního návratového typu (jen kontrola, bez generování).
 // Uloží celý stav parseru, zpracuje funkci od jejího 'def' a stav obnoví.
-static int analyze_function_now(int idx) {
+static int analyze_function_now(int idx)
+{
     tToken saved_token = current_token;
     int saved_index = current_token_index;
     tTokenType saved_prev = prev_token_type;
@@ -1262,7 +1308,8 @@ static int analyze_function_now(int idx) {
     return err;
 }
 
-int parser_resolve_function(const char* name) {
+int parser_resolve_function(const char* name)
+{
     int idx = find_func(name);
     if (idx < 0) {
         return ERR_OK; // vestavěná nebo nedefinovaná funkce (řeší sem_check_function_call)
@@ -1282,7 +1329,8 @@ int parser_resolve_function(const char* name) {
     return analyze_function_now(idx);
 }
 
-int parser_parse_if_expr(tTypeInfo* out_type) {
+int parser_parse_if_expr(tTypeInfo* out_type)
+{
     int err = parse_if(true);
     if (err == ERR_OK && out_type != NULL) {
         *out_type = last_expr_type;
@@ -1290,6 +1338,7 @@ int parser_parse_if_expr(tTypeInfo* out_type) {
     return err;
 }
 
-bool parser_codegen_enabled(void) {
+bool parser_codegen_enabled(void)
+{
     return check_only_depth == 0;
 }

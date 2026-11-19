@@ -771,7 +771,7 @@ restart:
             }
             break;
 
-        case S_STRING_EMPTY: 
+        case S_STRING_EMPTY:
             if (c == '"') {
                 state = S_ML_STRING;
             } else {

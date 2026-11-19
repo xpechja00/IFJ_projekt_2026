@@ -8,10 +8,10 @@
 #ifndef SEMANTIC_H
 #define SEMANTIC_H
 
-#include <stdbool.h>
-#include "symtable.h"
-#include "scanner.h"
 #include "error.h"
+#include "scanner.h"
+#include "symtable.h"
+#include <stdbool.h>
 
 // maximální hloubka zanoření bloků
 #define SEM_MAX_SCOPES 256
@@ -20,7 +20,7 @@
 typedef struct {
     tSymTable* global_table;
     tSymTable* scopes[SEM_MAX_SCOPES];
-    int scope_top; 
+    int scope_top;
     bool in_function;
     bool has_explicit_return_type;
     tTypeInfo expected_return_type;

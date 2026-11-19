@@ -8,9 +8,9 @@
 #ifndef PARSER_H
 #define PARSER_H
 
-#include <stdbool.h>
-#include "symtable.h"
 #include "scanner.h"
+#include "symtable.h"
+#include <stdbool.h>
 
 // Hlavní funkce: načte tokeny, provede oba průchody a vrátí chybový kód (tErrorCode)
 int parse(tSymTable* global_symtable);

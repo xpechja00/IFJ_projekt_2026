@@ -73,7 +73,7 @@ static int insert_builtin(tSymTable* global_table, const char* name, tDataType r
     params[1] = make_type(p2);
     params[2] = make_type(p3);
 
-    // přidaní atributů do struktury data  
+    // přidaní atributů do struktury data
     tData data;
     data.kind = SYM_FUNC;
     data.attribute.func.returnType = make_type(ret_type);
@@ -106,19 +106,30 @@ int sem_init(tSemContext* context, tSymTable* global_table)
         context->scopes[a] = NULL;
     }
 
-    // registrace vestavěných funkcí 
+    // registrace vestavěných funkcí
     int err = ERR_OK;
-    if ((err = insert_builtin(global_table, "print", TYPE_UNIT, 1, TYPE_UNIT, TYPE_UNIT, TYPE_UNIT)) != ERR_OK) return err;
-    if ((err = insert_builtin(global_table, "readLine", TYPE_STRING, 0, TYPE_UNIT, TYPE_UNIT, TYPE_UNIT)) != ERR_OK) return err;
-    if ((err = insert_builtin(global_table, "readInt", TYPE_INT, 0, TYPE_UNIT, TYPE_UNIT, TYPE_UNIT)) != ERR_OK) return err;
-    if ((err = insert_builtin(global_table, "readDouble", TYPE_DOUBLE, 0, TYPE_UNIT, TYPE_UNIT, TYPE_UNIT)) != ERR_OK) return err;
-    if ((err = insert_builtin(global_table, "toStr", TYPE_STRING, 1, TYPE_UNIT, TYPE_UNIT, TYPE_UNIT)) != ERR_OK) return err;
-    if ((err = insert_builtin(global_table, "toInt", TYPE_INT, 1, TYPE_DOUBLE, TYPE_UNIT, TYPE_UNIT)) != ERR_OK) return err;
-    if ((err = insert_builtin(global_table, "strLength", TYPE_INT, 1, TYPE_STRING, TYPE_UNIT, TYPE_UNIT)) != ERR_OK) return err;
-    if ((err = insert_builtin(global_table, "subStr", TYPE_STRING, 3, TYPE_STRING, TYPE_INT, TYPE_INT)) != ERR_OK) return err;
-    if ((err = insert_builtin(global_table, "ord", TYPE_INT, 2, TYPE_STRING, TYPE_INT, TYPE_UNIT)) != ERR_OK) return err;
-    if ((err = insert_builtin(global_table, "chr", TYPE_STRING, 1, TYPE_INT, TYPE_UNIT, TYPE_UNIT)) != ERR_OK) return err;
-    if ((err = insert_builtin(global_table, "readBoolean", TYPE_BOOLEAN, 0, TYPE_UNIT, TYPE_UNIT, TYPE_UNIT)) != ERR_OK) return err;
+    if ((err = insert_builtin(global_table, "print", TYPE_UNIT, 1, TYPE_UNIT, TYPE_UNIT, TYPE_UNIT)) != ERR_OK)
+        return err;
+    if ((err = insert_builtin(global_table, "readLine", TYPE_STRING, 0, TYPE_UNIT, TYPE_UNIT, TYPE_UNIT)) != ERR_OK)
+        return err;
+    if ((err = insert_builtin(global_table, "readInt", TYPE_INT, 0, TYPE_UNIT, TYPE_UNIT, TYPE_UNIT)) != ERR_OK)
+        return err;
+    if ((err = insert_builtin(global_table, "readDouble", TYPE_DOUBLE, 0, TYPE_UNIT, TYPE_UNIT, TYPE_UNIT)) != ERR_OK)
+        return err;
+    if ((err = insert_builtin(global_table, "toStr", TYPE_STRING, 1, TYPE_UNIT, TYPE_UNIT, TYPE_UNIT)) != ERR_OK)
+        return err;
+    if ((err = insert_builtin(global_table, "toInt", TYPE_INT, 1, TYPE_DOUBLE, TYPE_UNIT, TYPE_UNIT)) != ERR_OK)
+        return err;
+    if ((err = insert_builtin(global_table, "strLength", TYPE_INT, 1, TYPE_STRING, TYPE_UNIT, TYPE_UNIT)) != ERR_OK)
+        return err;
+    if ((err = insert_builtin(global_table, "subStr", TYPE_STRING, 3, TYPE_STRING, TYPE_INT, TYPE_INT)) != ERR_OK)
+        return err;
+    if ((err = insert_builtin(global_table, "ord", TYPE_INT, 2, TYPE_STRING, TYPE_INT, TYPE_UNIT)) != ERR_OK)
+        return err;
+    if ((err = insert_builtin(global_table, "chr", TYPE_STRING, 1, TYPE_INT, TYPE_UNIT, TYPE_UNIT)) != ERR_OK)
+        return err;
+    if ((err = insert_builtin(global_table, "readBoolean", TYPE_BOOLEAN, 0, TYPE_UNIT, TYPE_UNIT, TYPE_UNIT)) != ERR_OK)
+        return err;
 
     return ERR_OK;
 }
@@ -169,7 +180,7 @@ tData* sem_find_var(tSemContext* context, const char* name)
     if (context == NULL || name == NULL) {
         return NULL;
     }
-    
+
     for (int a = context->scope_top; a >= 0; a--) {
         tData* found = symtable_search(context->scopes[a], name);
         if (found != NULL && found->kind == SYM_VAR) {
@@ -225,21 +236,21 @@ int sem_register_function(tSymTable* global_table, const char* name, tTypeInfo r
     tData* existing = symtable_search(global_table, name);
     if (existing != NULL) {
         if ((existing->kind != SYM_FUNC) || (existing->attribute.func.isDefined == true)) {
-            return ERR_REDEF; 
+            return ERR_REDEF;
         }
     }
 
     // kontrola main (nula parametrů a typ unit)
     if (is_main == true) {
         if (param_count > 0) {
-            return ERR_ARGS; 
+            return ERR_ARGS;
         }
         if (return_type.type != TYPE_UNIT) {
-            return ERR_TYPE; 
+            return ERR_TYPE;
         }
     }
 
-    // kontrola platnosti typů parametrů a návratového typu 
+    // kontrola platnosti typů parametrů a návratového typu
     if (is_valid_value_type(return_type) == false) {
         return ERR_TYPE;
     }

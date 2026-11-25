@@ -1,0 +1,6 @@
+import ifj26.*
+@main
+def main() =
+    val s = 0
+    for i <- 1 to 10 by s do
+        print(i)

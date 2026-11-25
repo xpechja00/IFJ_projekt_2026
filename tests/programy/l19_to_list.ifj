@@ -1,0 +1,6 @@
+import ifj26.*
+@main
+def main() =
+    val itemsList: List[Int] = (1 to 5).toList
+    val lstStr = itemsList.toString
+    print(lstStr)

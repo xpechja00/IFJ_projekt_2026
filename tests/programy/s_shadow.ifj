@@ -1,0 +1,9 @@
+import ifj26.*
+@main
+def main() =
+    val a = 1
+    if a < 2 then
+        val a = "x"
+        print(a)
+    else
+        print(a)

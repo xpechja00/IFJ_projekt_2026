@@ -1,0 +1,6 @@
+import ifj26.*
+@main
+def main() =
+    val lst = List.range(1, 10)
+    val x = lst(2)
+    print(x)

@@ -1,0 +1,7 @@
+import ifj26.*
+@main
+def main() =
+    val a = List(1, 2)
+    val b = List(3)
+    val c: List[Int] = a ++ b ++ List()
+    print(c)

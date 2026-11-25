@@ -1,0 +1,9 @@
+import ifj26.*
+def sum(l: List[Int]): Int =
+    var s = 0
+    for x <- l do
+        s = s + x
+    return s
+@main
+def main() =
+    print(sum(List(1, 2, 3)))

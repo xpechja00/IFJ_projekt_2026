@@ -1,0 +1,4 @@
+import ifj26.*
+@main
+def main() =
+    val lst = List.range(1, 2.5)

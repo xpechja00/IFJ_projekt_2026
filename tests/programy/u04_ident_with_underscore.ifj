@@ -1,0 +1,6 @@
+import ifj26.*
+@main
+def main() =
+    val _x = 1
+    val a_b = _x
+    print(a_b)

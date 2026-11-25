@@ -1,0 +1,6 @@
+import ifj26.*
+@main
+def main() =
+    val d: Double = 1
+    var e = 1.5
+    e = 2

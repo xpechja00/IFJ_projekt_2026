@@ -1,0 +1,6 @@
+import ifj26.*
+def f(x: Int): Int =
+    return if x < 0 then 0 - x else x
+@main
+def main() =
+    print(f(1))

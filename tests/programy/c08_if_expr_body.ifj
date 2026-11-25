@@ -1,0 +1,5 @@
+import ifj26.*
+def f(x: Int) = if x < 0 then 0 - x else x
+@main
+def main() =
+    val y: Int = f(1)

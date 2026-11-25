@@ -1,0 +1,4 @@
+import ifj26.*
+@main
+def main() =
+    val b = 1 < 2 == true

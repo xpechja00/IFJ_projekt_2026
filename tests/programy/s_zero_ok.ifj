@@ -1,0 +1,7 @@
+import ifj26.*
+@main
+def main() =
+    val x = 0
+    val y = 0.5
+    val z = 0e1
+    print(x)

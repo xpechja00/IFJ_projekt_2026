@@ -1,0 +1,5 @@
+import ifj26.*
+@main
+def main() =
+    val l = (0 until 10 by 2).toList
+    print(l(1))

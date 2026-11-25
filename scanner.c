@@ -509,8 +509,8 @@ restart:
                 state = S_ID;
                 break;
             }
-            lex_error(tok_line, "samotné '_' není identifikátor");
-            break;
+            unget_char(c);
+            return make_token(TOK_UNDERSCORE, tok_line);
 
         case S_ID:
             if (is_ident_char(c)) {

@@ -1,0 +1,5 @@
+import ifj26.*
+@main
+def main() =
+    val s: String = toStr(List(true, false))
+    print(List(1.5))

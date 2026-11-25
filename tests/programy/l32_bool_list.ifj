@@ -1,0 +1,6 @@
+import ifj26.*
+@main
+def main() =
+    val l: List[Boolean] = List(true, 1 < 2)
+    if l(0) then
+        print(1)

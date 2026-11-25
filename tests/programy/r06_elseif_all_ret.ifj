@@ -1,0 +1,11 @@
+import ifj26.*
+def f(x: Int): Int =
+    if x < 1 then
+        return 1
+    else if x < 5 then
+        return 2
+    else
+        return 3
+@main
+def main() =
+    val y = f(2)

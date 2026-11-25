@@ -1,0 +1,6 @@
+import ifj26.*
+@main
+def main() =
+    val y: Int = f()
+    print(y)
+def f() = 5

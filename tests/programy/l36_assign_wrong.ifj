@@ -1,0 +1,5 @@
+import ifj26.*
+@main
+def main() =
+    var l: List[Int] = List(1)
+    l = List("a")

@@ -1,0 +1,5 @@
+import ifj26.*
+@main
+def main() =
+    val l = List("ab", "c")
+    val n: Int = l(0).length

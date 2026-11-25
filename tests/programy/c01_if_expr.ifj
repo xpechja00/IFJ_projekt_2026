@@ -1,0 +1,6 @@
+import ifj26.*
+@main
+def main() =
+    val x = -5
+    val a = if x < 0 then 0 - x else x
+    val b: Int = a

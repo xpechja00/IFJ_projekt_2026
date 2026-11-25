@@ -1,0 +1,4 @@
+import ifj26._
+@main
+def main() =
+    print(1)

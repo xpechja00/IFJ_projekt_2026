@@ -1,0 +1,4 @@
+import ifj26.*
+@main
+def main() =
+    val b: Boolean = List(1) == List(1)

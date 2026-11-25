@@ -1,0 +1,5 @@
+import ifj26.*
+def f(n: Int) = f(n)
+@main
+def main() =
+    f(1)

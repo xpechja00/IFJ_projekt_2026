@@ -1,0 +1,9 @@
+import ifj26.*
+def max(a: Int, b: Int): Int =
+    if a > b then
+        a
+    else
+        b
+@main
+def main() =
+    print(max(1, 2))

@@ -1,0 +1,5 @@
+import ifj26.*
+@main
+def main() =
+    val l = List(1, 2.5)
+    val d: Double = l(0)

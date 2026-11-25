@@ -1,0 +1,5 @@
+import ifj26.*
+@main
+def main() =
+    val n = 5
+    val x = n(0)

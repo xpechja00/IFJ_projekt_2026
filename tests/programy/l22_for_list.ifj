@@ -1,0 +1,6 @@
+import ifj26.*
+@main
+def main() =
+    val names = List("a", "b")
+    for n <- names do
+        print(n + "!")

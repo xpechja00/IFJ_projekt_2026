@@ -1,0 +1,6 @@
+import ifj26.*
+def f(n: Int) = g(n)
+@main
+def main(): Unit =
+    print(1)
+def g(n: Int): Int = f(n)

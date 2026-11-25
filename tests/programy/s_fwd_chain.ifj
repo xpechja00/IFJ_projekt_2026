@@ -1,0 +1,7 @@
+import ifj26.*
+@main
+def main(): Unit =
+    val y: Int = a()
+    print(y)
+def a() = b() + 1
+def b() = 2

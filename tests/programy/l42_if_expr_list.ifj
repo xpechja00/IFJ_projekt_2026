@@ -1,0 +1,5 @@
+import ifj26.*
+@main
+def main() =
+    val c = true
+    val l: List[Int] = if c then List(1) else List()

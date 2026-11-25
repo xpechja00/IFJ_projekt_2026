@@ -1,0 +1,6 @@
+import ifj26.*
+@main
+def main() =
+    val l = List(1, 2, 3)
+    val x: Int = l(1)
+    print(x)

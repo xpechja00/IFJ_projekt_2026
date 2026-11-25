@@ -1,0 +1,6 @@
+import ifj26.*
+@main
+def main() =
+    val l = List(1, 2, 3)
+    val i = 1
+    val x: Int = l(i + 1) * 2 - l(0)

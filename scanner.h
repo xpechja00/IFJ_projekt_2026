@@ -24,6 +24,7 @@ typedef enum {
     TOK_STRING_LIT,
     TOK_TRUE_LIT,
     TOK_FALSE_LIT,
+    TOK_UNDERSCORE,
 
     // klíčová slova
     TOK_KW_DEF,
@@ -37,11 +38,11 @@ typedef enum {
     TOK_KW_VAR,
     TOK_KW_WHILE,
     TOK_KW_FOR,
-    TOK_KW_CASE, // rezervované, neimplementujeme
-    TOK_KW_CLASS, // rezervované, neimplementujeme
-    TOK_KW_EXTENSION, // rezervované, neimplementujeme
-    TOK_KW_MATCH, // rezervované, neimplementujeme
-    TOK_KW_TYPE, // rezervované, neimplementujeme
+    TOK_KW_CASE, // rezervované
+    TOK_KW_CLASS, // rezervované
+    TOK_KW_EXTENSION, // rezervované
+    TOK_KW_MATCH, // rezervované
+    TOK_KW_TYPE, // rezervované
 
     // typy
     TOK_KW_INT,

@@ -1,0 +1,6 @@
+import ifj26.*
+def mk(n: Int) = List.range(0, n)
+@main
+def main() =
+    val l: List[Int] = mk(3)
+    print(l(0))

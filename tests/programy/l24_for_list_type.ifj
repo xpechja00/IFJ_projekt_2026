@@ -1,0 +1,5 @@
+import ifj26.*
+@main
+def main() =
+    for n <- List("a") do
+        val k: Int = n

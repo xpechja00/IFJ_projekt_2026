@@ -1,0 +1,10 @@
+import ifj26.*
+def f() =
+    val x = 1
+    if x < 1 then
+        print(1)
+    else
+        print(2)
+@main
+def main() =
+    val u: Unit = f()

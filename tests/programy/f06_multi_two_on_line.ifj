@@ -1,0 +1,7 @@
+import ifj26.*
+@main
+def main() =
+    for
+        i <- 0 to 3 if i > 1
+    do
+        print(i)

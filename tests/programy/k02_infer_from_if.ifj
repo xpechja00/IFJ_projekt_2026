@@ -1,0 +1,10 @@
+import ifj26.*
+def max(a: Int, b: Int) =
+    if a > b then
+        a
+    else
+        b
+@main
+def main() =
+    val m: Int = max(1, 2)
+    print(m)

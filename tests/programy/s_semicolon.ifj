@@ -1,0 +1,4 @@
+import ifj26.*
+@main
+def main() =
+    val a = 1; print(a)

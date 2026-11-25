@@ -24,13 +24,18 @@ build-check: check build
 format:
 	clang-format -i *.c *.h
 
-test: tests/scanner_test
+test: $(TARGET) tests/scanner_test tests/symtable_test
 	./tests/scanner_test
+	./tests/symtable_test
+	sh tests/run_tests.sh
 
 tests/scanner_test: tests/scanner_test.c scanner.o error.o
 	$(CC) $(CFLAGS) -I. $^ -o $@
 
+tests/symtable_test: tests/test_symtable.c symtable.o
+	$(CC) $(CFLAGS) -I. $^ -o $@
+
 clean:
-	rm -f $(TARGET) *.o *.d tests/scanner_test tests/*.d
+	rm -f $(TARGET) *.o *.d tests/scanner_test tests/symtable_test tests/*.d
 
 -include $(OBJS:.o=.d)

@@ -1,0 +1,5 @@
+import ifj26.*
+@main
+def a() = print(1)
+@main
+def b() = print(2)

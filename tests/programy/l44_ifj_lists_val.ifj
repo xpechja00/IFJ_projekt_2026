@@ -1,0 +1,5 @@
+import ifj26.*
+@main
+def main() =
+    val lst = List(1, 2)
+    lst = List(3)

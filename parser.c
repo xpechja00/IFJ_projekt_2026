@@ -1,6 +1,6 @@
 /*
  * Projekt: Implementace překladače imperativního jazyka IFJ26
- * Modul:   pasrer.c - syntaktický analyzátor
+ * Modul:   parser.c - syntaktický analyzátor
  *
  * Autor: xdundrm00, xpechja00
  *
@@ -723,14 +723,15 @@ int parse_function(tSymTable* global_symtable, bool is_main)
         get_next_token();
         body_err = parse_statement_block();
         if (body_err == ERR_OK && last_stmt_kind == STMT_IF) {
-            // Tělo končí příkazem if (spec 2.3, pravidlo 3)
+            // tělo končí ifem, jeho hodnota je výsledkem funkce
             bool explicit_unit = has_explicit_ret && ret_type == TYPE_UNIT;
             if (explicit_unit || last_if_all_return) {
                 body_err = ERR_OK;
-            } else if (!has_explicit_ret && last_if_all_unit) {
-                body_err = sem_check_func_body_result(&sem_context, UNIT_TYPE);
-            } else {
+            } else if (!last_if_all_unit && last_expr_type.type == TYPE_UNIT) {
+                // větve nemají stejný typ nebo chybí else
                 body_err = ERR_TYPE;
+            } else {
+                body_err = sem_check_func_body_result(&sem_context, last_expr_type);
             }
         } else if (body_err == ERR_OK) {
             body_err = sem_check_func_body_result(&sem_context, last_expr_type);

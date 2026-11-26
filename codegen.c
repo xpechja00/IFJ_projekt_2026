@@ -1048,7 +1048,7 @@ void cg_emit_expr_into(tExpr* expr, const char* dest_var)
             free(arg_vars[i]);
         }
         free(arg_vars);
-        emit("CALL $%s", expr->data.call.name);
+        emit("CALL $f_%s", expr->data.call.name);
         emit("MOVE %s TF@%%ret", dest_var);
         break;
     }
@@ -1172,15 +1172,23 @@ void cg_func_end(tTypeInfo ret_type, tTypeInfo last_body_type, bool ended_with_r
     if (!ended_with_return) {
         if (ret_type.type == TYPE_UNIT) {
             emit("MOVE LF@%%ret nil@nil");
-        } else if (ret_type.type == TYPE_DOUBLE && last_body_type.type == TYPE_INT) {
+        } else if (ret_type.type == TYPE_DOUBLE) {
+            // výsledek mohl přijít z větve typu Int (if na konci těla): převod za běhu
+            (void)last_body_type;
+            int id = cg_new_label_id();
+            char* tp = cg_strdup(cg_new_temp());
+            emit("TYPE %s LF@%%ret", tp);
+            emit("JUMPIFNEQ $ret_widen_%d %s string@int", id, tp);
             emit("INT2FLOAT LF@%%ret LF@%%ret");
+            emit("LABEL $ret_widen_%d", id);
+            free(tp);
         }
     }
-    emit("LABEL $%s$end", cg.cur_func_name);
+    emit("LABEL $f_%s$end", cg.cur_func_name);
     emit("POPFRAME");
     emit("RETURN");
 
-    sb_printf(&cg.funcs_buf, "\nLABEL $%s\n", cg.cur_func_name);
+    sb_printf(&cg.funcs_buf, "\nLABEL $f_%s\n", cg.cur_func_name);
     sb_printf(&cg.funcs_buf, "PUSHFRAME\n");
     if (cg.cur_defvars.data != NULL) {
         sb_append_n(&cg.funcs_buf, cg.cur_defvars.data, cg.cur_defvars.len);
@@ -1197,8 +1205,12 @@ void cg_emit_var_init(const char* name, tTypeInfo var_type, tExpr* init_expr)
     if (!parser_codegen_enabled()) {
         return;
     }
+    // výraz se vyhodnotí před definicí, aby "val x = x + 1" četlo vnější x
+    char* tmp = cg_strdup(cg_new_temp());
+    cg_emit_expr_into(init_expr, tmp);
     const char* ir = cg_define_var(name, var_type);
-    cg_emit_expr_into(init_expr, ir);
+    emit("MOVE %s %s", ir, tmp);
+    free(tmp);
     cg_emit_widen_if_needed(ir, var_type, init_expr->type);
 }
 
@@ -1231,7 +1243,7 @@ void cg_emit_return(bool has_expr, tExpr* expr, tTypeInfo expected_ret_type)
             cg_emit_widen_if_needed("LF@%ret", expected_ret_type, expr->type);
         }
     }
-    emit("JUMP $%s$end", cg.cur_func_name);
+    emit("JUMP $f_%s$end", cg.cur_func_name);
 }
 
 tCgIfState cg_if_begin(tExpr* cond, bool need_result)
@@ -1754,8 +1766,8 @@ static void emit_runtime_helpers(FILE* out)
         "JUMPIFEQ $__err_40 LF@cmp bool@true\n"
         "GT LF@cmp LF@%%p1 LF@%%p2\n"
         "JUMPIFEQ $__err_40 LF@cmp bool@true\n"
-        "GT LF@cmp LF@%%p1 LF@len\n"
-        "JUMPIFEQ $__err_40 LF@cmp bool@true\n"
+        "LT LF@cmp LF@%%p1 LF@len\n"
+        "JUMPIFNEQ $__err_40 LF@cmp bool@true\n"
         "GT LF@cmp LF@%%p2 LF@len\n"
         "JUMPIFEQ $__err_40 LF@cmp bool@true\n"
         "MOVE LF@%%ret string@\n"
@@ -1789,7 +1801,7 @@ void cg_emit_program(FILE* out)
     fprintf(out, "\nLABEL $__main_entry\n");
     if (cg.main_func_name != NULL) {
         fprintf(out, "CREATEFRAME\n");
-        fprintf(out, "CALL $%s\n", cg.main_func_name);
+        fprintf(out, "CALL $f_%s\n", cg.main_func_name);
     }
     fprintf(out, "EXIT int@0\n");
 }

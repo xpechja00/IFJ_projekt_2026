@@ -8,6 +8,7 @@
 #ifndef PARSER_H
 #define PARSER_H
 
+#include "codegen.h"
 #include "scanner.h"
 #include "symtable.h"
 #include <stdbool.h>
@@ -30,7 +31,7 @@ tToken parser_peek_token(void);
 int parser_resolve_function(const char* name);
 
 // Zpracuje if jako výraz (CONTROL) uvnitř precedenční analýzy, typ vrátí v out_type
-int parser_parse_if_expr(tTypeInfo* out_type);
+int parser_parse_if_expr(tTypeInfo* out_type, tExpr** out_expr);
 
 // true, pokud se má generovat kód (false během vnořené analýzy, která jen kontroluje)
 bool parser_codegen_enabled(void);

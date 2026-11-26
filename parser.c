@@ -1,11 +1,12 @@
 /*
  * Projekt: Implementace překladače imperativního jazyka IFJ26
- * Modul:   parser.c - syntaktický analyzátor
+ * Modul:   pasrer.c - syntaktický analyzátor
  *
  * Autor: xdundrm00, xpechja00
  *
  */
 #include "parser.h"
+#include "codegen.h"
 #include "error.h"
 #include "expression.h"
 #include "scanner.h"
@@ -70,6 +71,50 @@ static int current_func = -1;
 
 // Hloubka vnořené analýzy; > 0 znamená jen kontrolu bez generování kódu
 static int check_only_depth = 0;
+
+// Generování kódu: strom posledního výrazu a proměnná, do které se ukládá hodnota příkazů
+// aktuálního bloku (LF@%ret v těle funkce, výsledek if-výrazu; NULL = hodnota se zahodí)
+static tExpr* last_ast = NULL;
+static const char* cg_target = NULL;
+
+// Převezme strom posledního výrazu (volající ho uvolní)
+static tExpr* take_ast(void)
+{
+    tExpr* e = last_ast;
+    last_ast = NULL;
+    return e;
+}
+
+// Zahodí strom posledního výrazu
+static void drop_ast(void)
+{
+    cg_expr_free(take_ast());
+}
+
+// Vygeneruje výraz-příkaz: hodnotu uloží do cg_target, jinak jen vyhodnotí (kvůli vedlejším efektům)
+static void gen_value(tExpr* e)
+{
+    if (parser_codegen_enabled() && e != NULL) {
+        if (cg_target != NULL) {
+            cg_emit_expr_into(e, cg_target);
+        } else {
+            char tmp[48];
+            snprintf(tmp, sizeof(tmp), "%s", cg_new_temp());
+            cg_emit_expr_into(e, tmp);
+        }
+    }
+    cg_expr_free(e);
+}
+
+// Příkaz bez hodnoty (definice, přiřazení, cyklus): výsledkem bloku je ()
+static void gen_unit(void)
+{
+    if (parser_codegen_enabled() && cg_target != NULL) {
+        tExpr* u = cg_expr_unit();
+        cg_emit_expr_into(u, cg_target);
+        cg_expr_free(u);
+    }
+}
 
 // Vyhledání uživatelské funkce podle jména; -1, pokud neexistuje
 static int find_func(const char* name)
@@ -429,6 +474,8 @@ int parse_first_pass(tSymTable* global_symtable)
 // Úklid po parsování
 static int parse_finish(int err)
 {
+    drop_ast();
+    cg_target = NULL;
     sem_cleanup(&sem_context);
     free_func_info();
     free_all_tokens();
@@ -696,6 +743,13 @@ int parse_function(tSymTable* global_symtable, bool is_main)
 
     // >> Vstup do těla funkce a vložení parametrů do lokální tabulky
     sem_err = sem_enter_function(&sem_context, ret_type_info, has_explicit_ret, param_names, params_arr, param_count);
+    if (sem_err == ERR_OK) {
+        // Generování: návěští funkce, parametry z TF@%p0.. do lokálních proměnných
+        cg_func_begin(func_name, param_names, param_count);
+        if (is_main) {
+            cg_set_main(func_name);
+        }
+    }
     free(params_arr);
     free(param_names);
     if (sem_err != ERR_OK) {
@@ -717,11 +771,14 @@ int parse_function(tSymTable* global_symtable, bool is_main)
     }
     get_next_token();
 
-    // Tělo funkce
+    // Tělo funkce: hodnota posledního příkazu je návratovou hodnotou (LF@%ret)
     int body_err = 0;
+    bool ended_with_return = false;
+    cg_target = "LF@%ret";
     if (current_token.type == TOK_EOL) {
         get_next_token();
         body_err = parse_statement_block();
+        ended_with_return = (last_stmt_kind == STMT_RETURN);
         if (body_err == ERR_OK && last_stmt_kind == STMT_IF) {
             // tělo končí ifem, jeho hodnota je výsledkem funkce
             bool explicit_unit = has_explicit_ret && ret_type == TYPE_UNIT;
@@ -740,6 +797,7 @@ int parse_function(tSymTable* global_symtable, bool is_main)
         // Jednořádkové tělo
         body_err = parse_expression_or_call();
         if (body_err == ERR_OK) {
+            gen_value(take_ast());
             // >> Kontrola návratového typu jednořádkového těla funkce
             body_err = sem_check_func_body_result(&sem_context, last_expr_type);
         }
@@ -759,6 +817,13 @@ int parse_function(tSymTable* global_symtable, bool is_main)
         }
     }
 
+    // Generování: konec funkce (návratová hodnota, POPFRAME, RETURN)
+    cg_target = NULL;
+    if (body_err == ERR_OK) {
+        tTypeInfo final_ret = has_explicit_ret ? ret_type_info : sem_context.expected_return_type;
+        cg_func_end(final_ret, last_expr_type, ended_with_return);
+    }
+
     // >> Opouštění funkce a úklid lokálního rozsahu platnosti
     sem_leave_function(&sem_context);
     current_local_table = NULL;
@@ -768,8 +833,9 @@ int parse_function(tSymTable* global_symtable, bool is_main)
 
 int parse_expression()
 {
-    // >> Precedenční analýza výrazu se sémantickou kontrolou
-    return parse_expression_psa(&sem_context, current_local_table, &last_expr_type);
+    // >> Precedenční analýza výrazu se sémantickou kontrolou (strom výrazu do last_ast)
+    drop_ast();
+    return parse_expression_psa(&sem_context, current_local_table, &last_expr_type, &last_ast);
 }
 
 // Zjištění zda se jedná o volání funkce či výraz
@@ -821,9 +887,16 @@ int parse_var()
     if (err != ERR_OK) {
         return err;
     }
+    tExpr* init = take_ast();
+    tTypeInfo final_type = has_explicit_type ? var_type : last_expr_type;
 
     // >> Kontrola typu a uložení proměnné do tabulky symbolů
     err = sem_define_var(&sem_context, current_local_table, var_name, is_mutable, has_explicit_type, var_type, last_expr_type);
+    if (err == ERR_OK) {
+        cg_emit_var_init(var_name, final_type, init);
+        gen_unit();
+    }
+    cg_expr_free(init);
 
     // Definice proměnné jako příkaz má typ Unit
     last_expr_type = UNIT_TYPE;
@@ -838,14 +911,24 @@ int parse_return()
     if (current_token.type == TOK_EOL || current_token.type == TOK_DEDENT || current_token.type == TOK_SEMICOLON || current_token.type == TOK_KW_ELSE) {
         // >> Sémantická kontrola prázdného příkazu return
         last_expr_type = UNIT_TYPE;
-        return sem_check_return(&sem_context, false, UNIT_TYPE);
+        int ret_err = sem_check_return(&sem_context, false, UNIT_TYPE);
+        if (ret_err == ERR_OK) {
+            cg_emit_return(false, NULL, sem_context.expected_return_type);
+        }
+        return ret_err;
     }
 
     int err = parse_expression_or_call();
     if (err != ERR_OK)
         return err;
     // >> Sémantická kontrola návratového typu v příkazu return
-    return sem_check_return(&sem_context, true, last_expr_type);
+    err = sem_check_return(&sem_context, true, last_expr_type);
+    tExpr* value = take_ast();
+    if (err == ERR_OK) {
+        cg_emit_return(true, value, sem_context.expected_return_type);
+    }
+    cg_expr_free(value);
+    return err;
 }
 
 // Příkazy
@@ -891,13 +974,23 @@ static int parse_statement_inner(void)
                 return err;
             // >> Kontrola modifikovatelnosti a typové kompatibility při přiřazení
             err = sem_check_assignment(&sem_context, current_local_table, var_name, last_expr_type);
+            tExpr* rhs = take_ast();
+            if (err == ERR_OK) {
+                cg_emit_assign(var_name, rhs);
+                gen_unit();
+            }
+            cg_expr_free(rhs);
             last_expr_type = UNIT_TYPE; // přiřazení má typ Unit
             return err;
         }
     }
 
-    // Čistý výraz
-    return parse_expression_or_call();
+    // Čistý výraz: vyhodnotí se, hodnota je výsledkem bloku
+    int err = parse_expression_or_call();
+    if (err == ERR_OK) {
+        gen_value(take_ast());
+    }
+    return err;
 }
 
 // Zpracuje jeden příkaz a zapamatuje si jeho druh
@@ -955,6 +1048,7 @@ int parse_block()
         return push_err;
     }
     current_local_table = sem_context.scopes[sem_context.scope_top];
+    cg_scope_push();
 
     int err = ERR_OK;
     if (current_token.type == TOK_EOL) {
@@ -969,6 +1063,7 @@ int parse_block()
     }
 
     // >> Uzavření aktuálního rozsahu platnosti
+    cg_scope_pop();
     sem_scope_pop(&sem_context);
     current_local_table = (sem_context.scope_top >= 0) ? sem_context.scopes[sem_context.scope_top] : NULL;
     return err;
@@ -1021,16 +1116,26 @@ int parse_if(bool as_expr)
         return err;
     }
 
+    // Generování: skok na else podle podmínky; if jako výraz má vlastní proměnnou pro výsledek
+    tExpr* cond = take_ast();
+    tCgIfState if_state = cg_if_begin(cond, as_expr);
+    cg_expr_free(cond);
+    const char* saved_target = cg_target;
+    if (as_expr) {
+        cg_target = if_state.res_var;
+    }
+
     // Then
     if (current_token.type != TOK_KW_THEN) {
-        return ERR_SYNTAX;
+        err = ERR_SYNTAX;
+        goto if_end;
     }
     get_next_token();
 
     // Tělo then (blok nebo jednořádkové tělo)
     err = parse_block();
     if (err != ERR_OK) {
-        return err;
+        goto if_end;
     }
     tTypeInfo then_type = last_expr_type;
     bool then_return, then_unit;
@@ -1043,11 +1148,20 @@ int parse_if(bool as_expr)
 
     if (current_token.type == TOK_KW_ELSE) {
         get_next_token();
+        cg_if_else(&if_state);
         if (current_token.type == TOK_KW_IF) {
             // else if
             err = parse_if(as_expr);
             if (err != ERR_OK) {
-                return err;
+                goto if_end;
+            }
+            if (as_expr) {
+                // výsledek vnořeného if-výrazu do výsledku tohoto
+                tExpr* inner = take_ast();
+                if (parser_codegen_enabled() && cg_target != NULL) {
+                    cg_emit_expr_into(inner, cg_target);
+                }
+                cg_expr_free(inner);
             }
             else_type = last_expr_type;
             else_return = last_if_all_return;
@@ -1055,14 +1169,19 @@ int parse_if(bool as_expr)
         } else {
             err = parse_block();
             if (err != ERR_OK) {
-                return err;
+                goto if_end;
             }
             else_type = last_expr_type;
             branch_info(&else_return, &else_unit);
         }
     } else if (as_expr) {
         // if jako výraz musí mít větev else
-        return ERR_SYNTAX;
+        err = ERR_SYNTAX;
+        goto if_end;
+    } else if (cg_target != NULL && parser_codegen_enabled()) {
+        // chybějící else: výsledkem je ()
+        cg_if_else(&if_state);
+        gen_unit();
     }
 
     last_if_all_return = then_return && else_return;
@@ -1073,20 +1192,33 @@ int parse_if(bool as_expr)
     if (as_expr) {
         // Typy obou větví musí být shodné (příp. s implicitní konverzí)
         if (!has_common) {
-            return ERR_TYPE;
+            err = ERR_TYPE;
+            goto if_end;
         }
         last_expr_type = result_type;
+        // Hodnotou if-výrazu je jeho výsledná proměnná
+        drop_ast();
+        last_ast = cg_expr_temp_var(if_state.res_var, result_type);
     } else {
         last_expr_type = has_common ? result_type : UNIT_TYPE;
     }
-
+    cg_if_end(&if_state, as_expr, last_expr_type, then_type, else_type);
+    cg_target = saved_target;
     return ERR_OK;
+
+if_end:
+    free(if_state.res_var);
+    cg_target = saved_target;
+    return err;
 }
 
 // While
 int parse_while()
 {
     get_next_token();
+
+    // Návěští před vyhodnocením podmínky
+    tCgWhileState while_state = cg_while_begin();
 
     // Podmínka
     int err = parse_expression();
@@ -1097,6 +1229,9 @@ int parse_while()
     if (sem_check_condition(last_expr_type) != ERR_OK) {
         return ERR_TYPE;
     }
+    tExpr* cond = take_ast();
+    cg_while_cond(&while_state, cond);
+    cg_expr_free(cond);
 
     // Do
     if (current_token.type != TOK_KW_DO) {
@@ -1104,13 +1239,18 @@ int parse_while()
     }
     get_next_token();
 
-    // Tělo while
+    // Tělo while (hodnoty příkazů v těle se nikam neukládají)
+    const char* saved_target = cg_target;
+    cg_target = NULL;
     err = parse_block();
+    cg_target = saved_target;
     if (err != ERR_OK) {
         return err;
     }
+    cg_while_end(&while_state);
 
     last_expr_type = UNIT_TYPE; // cyklus má typ Unit
+    gen_unit();
     return ERR_OK;
 }
 
@@ -1163,33 +1303,46 @@ int parse_for(void)
     get_next_token();
 
     // Zdroj generátoru: počáteční hodnota rozsahu, nebo seznam (LISTS)
+    tExpr* src_expr = NULL; // začátek rozsahu nebo seznam
+    tExpr* end_expr = NULL;
+    tExpr* step_expr = NULL;
+    bool inclusive = false;
+    tCgForState for_state;
+    memset(&for_state, 0, sizeof(for_state));
+
     int err = parse_expression();
     if (err != ERR_OK)
         return err;
+    src_expr = take_ast();
     tTypeInfo var_type = { TYPE_INT, TYPE_UNIT };
     bool over_list = (last_expr_type.type == TYPE_LIST);
 
     if (over_list) {
         // for x <- seznam: proměnná má typ prvku
         if (sem_is_untyped_list(last_expr_type)) {
-            return ERR_TYPE;
+            err = ERR_TYPE;
+            goto for_end;
         }
         var_type.type = last_expr_type.innerType;
     } else {
         if (last_expr_type.type != TYPE_INT) {
-            return ERR_TYPE;
+            err = ERR_TYPE;
+            goto for_end;
         }
 
         // to / until
         if (!current_is_word("to") && !current_is_word("until")) {
-            return ERR_SYNTAX;
+            err = ERR_SYNTAX;
+            goto for_end;
         }
+        inclusive = current_is_word("to");
         get_next_token();
 
         // Koncová hodnota
         err = parse_int_expression();
         if (err != ERR_OK)
-            return err;
+            goto for_end;
+        end_expr = take_ast();
     }
 
     // Volitelný krok (jen u rozsahu)
@@ -1200,19 +1353,30 @@ int parse_for(void)
         int step_start = current_token_index;
         err = parse_int_expression();
         if (err != ERR_OK)
-            return err;
+            goto for_end;
+        step_expr = take_ast();
         if (current_token_index - step_start == 1 && step_token.type == TOK_INT_LIT && step_token.value.int_val == 0) {
-            return ERR_OTHER;
+            err = ERR_OTHER;
+            goto for_end;
         }
     }
 
     // Řídicí proměnná platí ve strážích i v těle: vlastní rozsah platnosti
     err = sem_scope_push(&sem_context);
     if (err != ERR_OK)
-        return err;
+        goto for_end;
     current_local_table = sem_context.scopes[sem_context.scope_top];
 
     err = sem_define_var(&sem_context, current_local_table, var_name, false, true, var_type, var_type);
+
+    // Generování: inicializace, řídicí proměnná a test konce cyklu
+    if (err == ERR_OK) {
+        if (over_list) {
+            for_state = cg_for_list_begin(var_name, var_type, src_expr);
+        } else {
+            for_state = cg_for_range_begin(var_name, src_expr, end_expr, step_expr, inclusive);
+        }
+    }
 
     // Stráže (guards): if podmínka
     while (err == ERR_OK) {
@@ -1239,6 +1403,11 @@ int parse_for(void)
         if (err == ERR_OK) {
             err = sem_check_condition(last_expr_type);
         }
+        if (err == ERR_OK) {
+            tExpr* guard = take_ast();
+            cg_for_guard(&for_state, guard);
+            cg_expr_free(guard);
+        }
     }
 
     // do
@@ -1246,16 +1415,37 @@ int parse_for(void)
         err = ERR_SYNTAX;
     }
 
-    // Tělo cyklu for
+    // Tělo cyklu for (hodnoty příkazů v těle se nikam neukládají)
     if (err == ERR_OK) {
         get_next_token();
+        const char* saved_target = cg_target;
+        cg_target = NULL;
         err = parse_block();
+        cg_target = saved_target;
+    }
+    if (err == ERR_OK) {
+        cg_for_end(&for_state); // uvolní i řetězce ve for_state
+    } else {
+        free(for_state.v_iter);
+        free(for_state.v_end);
+        free(for_state.v_step);
+        free(for_state.v_list);
+        free(for_state.v_idx);
+        free(for_state.v_len);
     }
 
     sem_scope_pop(&sem_context);
     current_local_table = (sem_context.scope_top >= 0) ? sem_context.scopes[sem_context.scope_top] : NULL;
 
     last_expr_type = UNIT_TYPE; // cyklus má typ Unit
+    if (err == ERR_OK) {
+        gen_unit();
+    }
+
+for_end:
+    cg_expr_free(src_expr);
+    cg_expr_free(end_expr);
+    cg_expr_free(step_expr);
     return err;
 }
 
@@ -1273,6 +1463,9 @@ static int analyze_function_now(int idx)
     bool saved_all_return = last_if_all_return;
     bool saved_all_unit = last_if_all_unit;
     int saved_func = current_func;
+    tExpr* saved_ast = take_ast();
+    const char* saved_target = cg_target;
+    cg_target = NULL;
 
     // Prázdné rozsahy pro vnořenou analýzu; rozsahy volající funkce se NEuvolňují
     for (int a = 0; a < SEM_MAX_SCOPES; a++) {
@@ -1306,6 +1499,9 @@ static int analyze_function_now(int idx)
     last_if_all_return = saved_all_return;
     last_if_all_unit = saved_all_unit;
     current_func = saved_func;
+    drop_ast();
+    last_ast = saved_ast;
+    cg_target = saved_target;
     return err;
 }
 
@@ -1330,11 +1526,18 @@ int parser_resolve_function(const char* name)
     return analyze_function_now(idx);
 }
 
-int parser_parse_if_expr(tTypeInfo* out_type)
+int parser_parse_if_expr(tTypeInfo* out_type, tExpr** out_expr)
 {
     int err = parse_if(true);
     if (err == ERR_OK && out_type != NULL) {
         *out_type = last_expr_type;
+    }
+    // strom if-výrazu (proměnná s výsledkem) převezme volající
+    tExpr* e = take_ast();
+    if (err == ERR_OK && out_expr != NULL) {
+        *out_expr = e;
+    } else {
+        cg_expr_free(e);
     }
     return err;
 }
